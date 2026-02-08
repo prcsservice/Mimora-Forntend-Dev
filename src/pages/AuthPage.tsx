@@ -3,12 +3,12 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import AuthLayout from '../components/auth/AuthLayout';
 import ProfileSelector from '../components/auth/views/ProfileSelector';
 import CustomerSignupView from '../components/auth/views/CustomerSignupView';
-import CustomerEmailSignupView from '../components/auth/views/CustomerEmailSignupView';
 import ArtistSignupView from '../components/auth/views/ArtistSignupView';
 import LoginView from '../components/auth/views/LoginView';
 import OTPVerificationView from '../components/auth/views/OTPVerificationView';
 import SuccessView from '../components/auth/views/SuccessView';
 import PrimaryButton from '../components/auth/PrimaryButton';
+import { RevealLoader } from '../components/common/RevealLoader';
 import { useAuth } from '../contexts/AuthContext';
 import { useAuthFlow } from '../hooks/useAuthFlow';
 import '../styles/auth.css';
@@ -18,7 +18,7 @@ type ProfileType = 'customer' | 'artist';
 const AuthPage: React.FC = () => {
     const location = useLocation();
     const navigate = useNavigate();
-    const { userType, setUserType, isAuthenticated } = useAuth();
+    const { userType, setUserType, isAuthenticated, isTransitioning, startTransition, endTransition } = useAuth();
 
     const {
         step,
@@ -31,15 +31,21 @@ const AuthPage: React.FC = () => {
         updateFormData,
         setEmailVerified,
         goToSuccess,
-        setStep,
     } = useAuthFlow();
 
-    // Redirect if already authenticated
+    // Redirect with reveal animation when authenticated
     useEffect(() => {
-        if (isAuthenticated) {
-            navigate('/home');
+        if (isAuthenticated && !isTransitioning) {
+            // Start the reveal animation
+            startTransition();
+            // Wait for animation to complete, then navigate
+            const timer = setTimeout(() => {
+                endTransition();
+                navigate('/home');
+            }, 1800); // Match RevealLoader animation duration
+            return () => clearTimeout(timer);
         }
-    }, [isAuthenticated, navigate]);
+    }, [isAuthenticated, isTransitioning, startTransition, endTransition, navigate]);
 
     // Determine what to show based on URL path
     const path = location.pathname;
@@ -56,6 +62,11 @@ const AuthPage: React.FC = () => {
             navigate(`/auth/${profileType}/login`);
         }
     };
+
+    // Show reveal animation when transitioning
+    if (isTransitioning) {
+        return <RevealLoader isLoading={true} />;
+    }
 
     // Profile Selection View (default /auth)
     if (path === '/auth') {
@@ -118,15 +129,14 @@ const AuthPage: React.FC = () => {
                     countryCode={formData.countryCode}
                     phone={formData.phone}
                     otp={formData.otp}
+                    email={formData.email}
                     onFullNameChange={(name) => updateFormData({ fullName: name })}
                     onCountryCodeChange={(code) => updateFormData({ countryCode: code })}
                     onPhoneChange={(phone) => updateFormData({ phone })}
                     onOtpChange={(otp) => updateFormData({ otp })}
+                    onEmailChange={(email) => updateFormData({ email })}
                     onSubmit={goToSuccess}
-                    onEmailSignIn={() => {
-                        // Switch to email signup view
-                        setStep('signup-customer-email');
-                    }}
+                    onEmailSignIn={() => { }}
                     onLoginClick={() => navigate('/auth/customer/login')}
                 />
             </AuthLayout>
@@ -166,18 +176,6 @@ const AuthPage: React.FC = () => {
     // These can be kept for in-page transitions or migrated to URL-based later
 
 
-    if (step === 'signup-customer-email') {
-        return (
-            <AuthLayout>
-                <CustomerEmailSignupView
-                    onPhoneSignIn={() => navigate('/auth/customer/signup')}
-                    onGoogleSignIn={() => console.log('Google Sign In')}
-                    onLoginClick={() => navigate('/auth/customer/login')}
-                    onSuccess={goToSuccess}
-                />
-            </AuthLayout>
-        );
-    }
 
     if (step === 'otp-verification') {
         return (

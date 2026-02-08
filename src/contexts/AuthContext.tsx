@@ -14,6 +14,7 @@ interface AuthState {
     isAuthenticated: boolean;
     isLoading: boolean;
     error: string | null;
+    isTransitioning: boolean;  // For reveal animation on redirect
 }
 
 interface AuthContextValue extends AuthState {
@@ -26,6 +27,8 @@ interface AuthContextValue extends AuthState {
     verifyEmailOTP: (email: string, otp: string) => Promise<void>;
     logout: () => void;
     clearError: () => void;
+    startTransition: () => void;  // Trigger reveal animation
+    endTransition: () => void;    // End reveal animation
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -42,6 +45,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         isAuthenticated: false,
         isLoading: true, // Start true to check localStorage
         error: null,
+        isTransitioning: false,
     });
 
     const [confirmationResult, setConfirmationResult] = useState<ConfirmationResult | null>(null);
@@ -89,6 +93,16 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
     const clearError = useCallback(() => {
         setState(prev => ({ ...prev, error: null }));
+    }, []);
+
+    // Start reveal transition animation
+    const startTransition = useCallback(() => {
+        setState(prev => ({ ...prev, isTransitioning: true }));
+    }, []);
+
+    // End reveal transition animation
+    const endTransition = useCallback(() => {
+        setState(prev => ({ ...prev, isTransitioning: false }));
     }, []);
 
     // Helper to complete auth
@@ -233,6 +247,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             isAuthenticated: false,
             isLoading: false,
             error: null,
+            isTransitioning: false,
         });
     }, []);
 
@@ -247,7 +262,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         verifyEmailOTP,
         logout,
         clearError,
-    }), [state, setUserType, loginWithGoogle, sendPhoneOTP, verifyPhoneOTP, sendEmailOTP, verifyEmailOTP, logout, clearError]);
+        startTransition,
+        endTransition,
+    }), [state, setUserType, loginWithGoogle, sendPhoneOTP, verifyPhoneOTP, sendEmailOTP, verifyEmailOTP, logout, clearError, startTransition, endTransition]);
 
     return (
         <AuthContext.Provider value={value}>

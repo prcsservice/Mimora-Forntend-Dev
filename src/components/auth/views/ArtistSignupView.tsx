@@ -1117,7 +1117,10 @@ const ArtistSignupView: React.FC = () => {
                 return true;
 
             case 3: // Professional Info
-                // For now, allow proceeding (certificate is optional for demo)
+                // Must select an option
+                if (!formData.howDidYouLearn) return false;
+                // If Professional Training, certificate is mandatory
+                if (formData.howDidYouLearn === 'professional' && !formData.certificateUrl) return false;
                 return true;
 
             case 4: // Address Details
@@ -1737,7 +1740,7 @@ const ArtistSignupView: React.FC = () => {
                                         ) : (
                                             /* After Upload: Show image with buttons */
                                             <div className="mt-3 flex items-center gap-6">
-                                                <div className="w-20 h-20 rounded-full overflow-hidden bg-gray-100 flex-shrink-0">
+                                                <div className="w-20 h-20 rounded-full overflow-hidden bg-gray-100 shrink-0">
                                                     <img
                                                         src={formData.profilePicUrl}
                                                         alt="Profile"
@@ -1787,7 +1790,7 @@ const ArtistSignupView: React.FC = () => {
                                                     </button>
                                                 </div>
                                                 {/* Illustration placeholder */}
-                                                <div className="w-28 h-28 flex-shrink-0 ml-4">
+                                                <div className="w-28 h-28 shrink-0 ml-4">
                                                     <svg viewBox="0 0 100 100" className="w-full h-full text-gray-300">
                                                         <circle cx="50" cy="35" r="18" fill="currentColor" opacity="0.3" />
                                                         <rect x="30" y="55" width="40" height="35" rx="5" fill="currentColor" opacity="0.2" />
@@ -1802,56 +1805,157 @@ const ArtistSignupView: React.FC = () => {
 
                             {/* SUBSTEP 3: Professional Information */}
                             {subStep === 3 && (
-                                <div className="space-y-6">
-                                    {/* How did you learn? */}
-                                    <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-3">How did you learn your craft?</label>
-                                        <div className="space-y-3">
-                                            {[
-                                                { value: 'professional', label: 'Professional Training', desc: 'Formal education or certified courses' },
-                                                { value: 'self-learned', label: 'Self-Learned', desc: 'Taught yourself through practice and resources' },
-                                                { value: 'apprentice', label: 'Apprenticeship', desc: 'Learned under an experienced mentor' },
-                                            ].map((option) => (
-                                                <label
-                                                    key={option.value}
-                                                    className={`flex items-start gap-3 p-4 border rounded-xl cursor-pointer transition-colors ${formData.howDidYouLearn === option.value
-                                                        ? 'border-[#E91E63] bg-pink-50'
-                                                        : 'border-gray-200 hover:bg-gray-50'
-                                                        }`}
-                                                >
-                                                    <input
-                                                        type="radio"
-                                                        name="howDidYouLearn"
-                                                        value={option.value}
-                                                        checked={formData.howDidYouLearn === option.value}
-                                                        onChange={(e) => updateFormData({ howDidYouLearn: e.target.value as 'professional' | 'self-learned' | 'apprentice' })}
-                                                        className="mt-1 w-4 h-4 text-[#E91E63] focus:ring-[#E91E63]"
-                                                    />
-                                                    <div>
-                                                        <p className="font-medium text-gray-900">{option.label}</p>
-                                                        <p className="text-sm text-gray-500">{option.desc}</p>
-                                                    </div>
-                                                </label>
-                                            ))}
-                                        </div>
-                                    </div>
+                                <div className="space-y-4">
+                                    {/* Hidden file input for certificate */}
+                                    <input
+                                        type="file"
+                                        id="certificate-upload"
+                                        onChange={async (e) => {
+                                            const file = e.target.files?.[0];
+                                            if (!file) return;
 
-                                    {/* Certificate Upload */}
-                                    <div className="p-6 border border-gray-200 rounded-xl">
-                                        <h3 className="font-semibold text-gray-900 mb-2">Certificate (Optional)</h3>
-                                        <p className="text-sm text-gray-500 mb-4">Upload any relevant certificates or qualifications</p>
-                                        <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center hover:bg-gray-50 cursor-pointer">
-                                            {formData.certificateUrl ? (
-                                                <p className="text-sm text-green-600">✓ Certificate uploaded</p>
-                                            ) : (
-                                                <>
-                                                    <svg className="w-10 h-10 text-gray-400 mx-auto mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-                                                    </svg>
-                                                    <p className="text-sm text-gray-600">Click to upload or drag and drop</p>
-                                                    <p className="text-xs text-gray-400 mt-1">PDF, JPG, PNG up to 10MB</p>
-                                                </>
+                                            // Validate file type
+                                            const validTypes = ['image/jpeg', 'image/png', 'application/pdf'];
+                                            if (!validTypes.includes(file.type)) {
+                                                console.error('Please select JPEG, PNG, or PDF file');
+                                                return;
+                                            }
+
+                                            // Validate file size (max 2MB)
+                                            if (file.size > 2 * 1024 * 1024) {
+                                                console.error('File size should be under 2MB');
+                                                return;
+                                            }
+
+                                            setIsUploadingImage(true);
+                                            try {
+                                                const fileName = `certificates/${Date.now()}_${file.name}`;
+                                                const storageRef = ref(storage, fileName);
+                                                await uploadBytes(storageRef, file);
+                                                const downloadUrl = await getDownloadURL(storageRef);
+                                                updateFormData({ certificateUrl: downloadUrl });
+                                                console.log('Certificate uploaded successfully:', downloadUrl);
+                                            } catch (error) {
+                                                console.error('Error uploading certificate:', error);
+                                            } finally {
+                                                setIsUploadingImage(false);
+                                            }
+                                        }}
+                                        accept=".jpg,.jpeg,.png,.pdf"
+                                        className="hidden"
+                                    />
+
+                                    {/* How did you learn the Art? */}
+                                    <h2 className="text-xl font-semibold text-gray-900 mb-4">How did you learned the Art?</h2>
+
+                                    <div className="space-y-3">
+                                        {/* Professional Training Option */}
+                                        <div
+                                            className={`border rounded-lg cursor-pointer transition-colors ${formData.howDidYouLearn === 'professional'
+                                                ? 'border-gray-300'
+                                                : 'border-gray-200 hover:border-gray-300'
+                                                }`}
+                                        >
+                                            <label className="flex items-center gap-3 p-4 cursor-pointer">
+                                                <input
+                                                    type="radio"
+                                                    name="howDidYouLearn"
+                                                    value="professional"
+                                                    checked={formData.howDidYouLearn === 'professional'}
+                                                    onChange={(e) => updateFormData({ howDidYouLearn: e.target.value as 'professional' | 'self-learned' | 'apprentice' })}
+                                                    className="w-5 h-5 text-[#0D9488] focus:ring-[#0D9488] border-gray-300"
+                                                />
+                                                <span className="font-medium text-gray-900">Professional Training</span>
+                                            </label>
+
+                                            {/* Certificate Upload - Shows only when Professional Training is selected */}
+                                            {formData.howDidYouLearn === 'professional' && (
+                                                <div className="px-4 pb-4">
+                                                    <div
+                                                        className="border-2 border-dashed border-gray-300 rounded-lg p-6 flex flex-col items-center justify-center cursor-pointer hover:border-gray-400 transition-colors"
+                                                        onClick={() => document.getElementById('certificate-upload')?.click()}
+                                                    >
+                                                        {formData.certificateUrl ? (
+                                                            <div className="text-center">
+                                                                <svg className="w-8 h-8 text-emerald-500 mx-auto mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                                                </svg>
+                                                                <p className="text-sm text-emerald-600 font-medium">Certificate uploaded</p>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        updateFormData({ certificateUrl: '' });
+                                                                    }}
+                                                                    className="text-xs text-gray-500 hover:text-gray-700 mt-1"
+                                                                >
+                                                                    Remove
+                                                                </button>
+                                                            </div>
+                                                        ) : (
+                                                            <>
+                                                                <svg className="w-8 h-8 text-gray-400 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                                                                </svg>
+                                                                <p className="text-sm font-medium text-gray-700">Upload your certificate</p>
+                                                                <p className="text-xs text-gray-500 mt-0.5">Choose your weightage certificates</p>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        document.getElementById('certificate-upload')?.click();
+                                                                    }}
+                                                                    disabled={isUploadingImage}
+                                                                    className="mt-3 px-4 py-2 border border-gray-300 text-sm font-medium rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
+                                                                >
+                                                                    {isUploadingImage ? 'Uploading...' : 'Browse File'}
+                                                                </button>
+                                                            </>
+                                                        )}
+                                                    </div>
+                                                    <p className="text-xs text-gray-400 mt-2">Note: Size should be under 2MB. Support JPEG, PNG, PDF format</p>
+                                                </div>
                                             )}
+                                        </div>
+
+                                        {/* Self-Learned Option */}
+                                        <div
+                                            className={`border rounded-lg cursor-pointer transition-colors ${formData.howDidYouLearn === 'self-learned'
+                                                ? 'border-gray-300'
+                                                : 'border-gray-200 hover:border-gray-300'
+                                                }`}
+                                        >
+                                            <label className="flex items-center gap-3 p-4 cursor-pointer">
+                                                <input
+                                                    type="radio"
+                                                    name="howDidYouLearn"
+                                                    value="self-learned"
+                                                    checked={formData.howDidYouLearn === 'self-learned'}
+                                                    onChange={(e) => updateFormData({ howDidYouLearn: e.target.value as 'professional' | 'self-learned' | 'apprentice' })}
+                                                    className="w-5 h-5 text-[#0D9488] focus:ring-[#0D9488] border-gray-300"
+                                                />
+                                                <span className="font-medium text-gray-900">Self-Learned</span>
+                                            </label>
+                                        </div>
+
+                                        {/* Apprenticeship Option */}
+                                        <div
+                                            className={`border rounded-lg cursor-pointer transition-colors ${formData.howDidYouLearn === 'apprentice'
+                                                ? 'border-gray-300'
+                                                : 'border-gray-200 hover:border-gray-300'
+                                                }`}
+                                        >
+                                            <label className="flex items-center gap-3 p-4 cursor-pointer">
+                                                <input
+                                                    type="radio"
+                                                    name="howDidYouLearn"
+                                                    value="apprentice"
+                                                    checked={formData.howDidYouLearn === 'apprentice'}
+                                                    onChange={(e) => updateFormData({ howDidYouLearn: e.target.value as 'professional' | 'self-learned' | 'apprentice' })}
+                                                    className="w-5 h-5 text-[#0D9488] focus:ring-[#0D9488] border-gray-300"
+                                                />
+                                                <span className="font-medium text-gray-900">Apprenticeship / Trained Under a Mentor</span>
+                                            </label>
                                         </div>
                                     </div>
                                 </div>
