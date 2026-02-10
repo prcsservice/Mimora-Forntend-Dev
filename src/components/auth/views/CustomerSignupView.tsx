@@ -6,6 +6,8 @@ import PrimaryButton from '../PrimaryButton';
 import SecondaryButton, { EmailIcon, GoogleIcon } from '../SecondaryButton';
 import { useAuth } from '@/contexts/AuthContext';
 import { authService } from '@/services/authService';
+import { toast } from 'sonner';
+import { useGeolocation } from '@/hooks/useGeolocation';
 
 // Phone Icon for secondary button
 const PhoneIcon = () => (
@@ -92,6 +94,9 @@ const CustomerSignupView: React.FC<CustomerSignupViewProps> = ({
     onEmailChange,
     onLoginClick,
 }) => {
+    // Request geolocation on component mount (for location capture)
+    useGeolocation();
+
     // Use shared AuthContext for all authentication methods
     const {
         loginWithGoogle,
@@ -202,8 +207,10 @@ const CustomerSignupView: React.FC<CustomerSignupViewProps> = ({
             const { exists } = await authService.checkUserExists(identifier, signupMode);
 
             if (exists) {
-                // User already exists - show error with login CTA
-                throw new Error('An account with this ' + (signupMode === 'email' ? 'email' : 'phone number') + ' already exists. Try logging in instead.');
+                // User already exists - show error with toast
+                const errorMsg = 'Account already exists. Try logging in instead.';
+                toast.error(errorMsg);
+                throw new Error(errorMsg);
             }
 
             if (signupMode === 'phone') {

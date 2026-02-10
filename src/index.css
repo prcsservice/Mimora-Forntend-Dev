@@ -73,41 +73,7 @@ body {
   background-color: rgba(232, 74, 127, 0.5); /* Brand pink with opacity on hover */
 }
 
-/* Page Transition Animations */
-@keyframes page-fade-out {
-  from {
-    opacity: 1;
-    transform: scale(1);
-  }
-  to {
-    opacity: 0;
-    transform: scale(0.98);
-  }
-}
-
-@keyframes page-fade-in {
-  from {
-    opacity: 0;
-    transform: scale(1.02);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
-
-.page-transition-out {
-  animation: page-fade-out 0.4s ease-out forwards;
-}
-
-.page-transition-in {
-  animation: page-fade-in 0.5s ease-out forwards;
-}
-
-/* Ensure smooth transitions for all route containers */
-#root > div {
-  transition: opacity 0.3s ease-out;
-}
+/* Page transitions are handled by framer-motion AnimatePresence */
 
 /* Fade in animation for inline elements */
 @keyframes fade-in {

@@ -6,6 +6,7 @@ import SecondaryButton, { EmailIcon, PhoneIcon, GoogleIcon } from '../SecondaryB
 import OTPInput from '../OTPInput';
 import { useAuth } from '@/contexts/AuthContext';
 import { authService } from '@/services/authService';
+import { toast } from 'sonner';
 
 type LoginMethod = 'email' | 'phone';
 
@@ -77,7 +78,6 @@ const LoginView: React.FC<LoginViewProps> = ({
         sendEmailOTP,
         verifyEmailOTP,
         isLoading,
-        loadingAction,
         error,
         clearError,
     } = useAuth();
@@ -168,10 +168,10 @@ const LoginView: React.FC<LoginViewProps> = ({
             const { exists } = await authService.checkUserExists(identifier, method);
 
             if (!exists) {
-                // User doesn't exist - show error with signup CTA
-                clearError();
-                // Set error through a local state since clearError doesn't allow setting
-                throw new Error('No account found with this ' + (method === 'email' ? 'email' : 'phone number') + '. Please create an account first.');
+                // User doesn't exist - show error with toast
+                const errorMsg = 'No account found. Please create an account first.';
+                toast.error(errorMsg);
+                throw new Error(errorMsg);
             }
 
             if (method === 'phone') {

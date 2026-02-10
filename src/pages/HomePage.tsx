@@ -1,10 +1,14 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import CustomerHomeNavbar from '../components/home/CustomerHomeNavbar';
+import ServiceCategoryIcons from '../components/home/ServiceCategoryIcons';
 import HeroCarousel from '../components/home/HeroCarousel';
 import SearchOverlay from '../components/home/SearchOverlay';
 import CategoriesSection from '../components/home/CategoriesSection';
 import ArtistSection from '../components/home/ArtistSection';
 import CustomerHomeFooter from '../components/home/CustomerHomeFooter';
+import BottomNavbar from '../components/home/BottomNavbar';
+import LocationDialog from '../components/home/LocationDialog';
+import { getCachedLocation } from '../hooks/useGeolocation';
 import type { ArtistData } from '../components/home/ArtistCard';
 
 // Sample data for Frequently Booked artists
@@ -12,7 +16,7 @@ const frequentlyBookedArtists: ArtistData[] = [
     {
         id: '1',
         name: 'Kavya Ramesh',
-        avatarColor: '#FFB6C1',
+        avatarUrl: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150&h=150&fit=crop&crop=face',
         specialty: 'Hairstylist',
         badges: [
             { type: 'kyc', label: 'KYC' },
@@ -20,13 +24,18 @@ const frequentlyBookedArtists: ArtistData[] = [
         ],
         distance: '4.5 km away',
         experience: '5+ years',
-        rating: '4,410.8K',
-        portfolioColors: ['#D4A574', '#8B7355', '#C9A86C', '#A0826D'],
+        rating: '4.4(1.8K)',
+        portfolioImages: [
+            '/info/home/dc70ace0b4a13e50170f19ceedc5b3c94e064c6f.png',
+            '/info/home/3d1bd4a1cacd7547f4bd8c65406c0d9830008248.png',
+            '/info/home/catagory section/hairstylist.png',
+            '/info/home/3daa4b9a59122c9b89963e9547aaaf5082f7cb3f.png',
+        ],
     },
     {
         id: '2',
         name: 'Shruti',
-        avatarColor: '#DDA0DD',
+        avatarUrl: 'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=150&h=150&fit=crop&crop=face',
         specialty: 'Makeup Artist',
         badges: [
             { type: 'kyc', label: 'KYC' },
@@ -34,13 +43,18 @@ const frequentlyBookedArtists: ArtistData[] = [
         ],
         distance: '2.1 km away',
         experience: '3+ years',
-        rating: '4,712.3K',
-        portfolioColors: ['#B8860B', '#CD853F', '#DEB887', '#D2691E'],
+        rating: '4.7(2.3K)',
+        portfolioImages: [
+            '/info/home/catagory section/mackup.png',
+            '/info/home/3d1bd4a1cacd7547f4bd8c65406c0d9830008248.png',
+            '/info/home/dc70ace0b4a13e50170f19ceedc5b3c94e064c6f.png',
+            '/info/home/catagory section/nail.png',
+        ],
     },
     {
         id: '3',
         name: 'Nisha Prabhu',
-        avatarColor: '#F0E68C',
+        avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&h=150&fit=crop&crop=face',
         specialty: 'Saree Draping · Saree Pleating',
         badges: [
             { type: 'kyc', label: 'KYC' },
@@ -48,13 +62,18 @@ const frequentlyBookedArtists: ArtistData[] = [
         ],
         distance: '1.9 km away',
         experience: '1+ years',
-        rating: '4,213.5K',
-        portfolioColors: ['#FFB6C1', '#DDA0DD', '#F0E68C', '#FFA07A'],
+        rating: '4.2(3.5K)',
+        portfolioImages: [
+            '/info/home/3daa4b9a59122c9b89963e9547aaaf5082f7cb3f.png',
+            '/info/home/catagory section/saree daping.png',
+            '/info/home/catagory section/saree plating.png',
+            '/info/home/3d1bd4a1cacd7547f4bd8c65406c0d9830008248.png',
+        ],
     },
     {
         id: '4',
         name: 'Aarti',
-        avatarColor: '#98FB98',
+        avatarUrl: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=150&h=150&fit=crop&crop=face',
         specialty: 'Mehendi Artist',
         badges: [
             { type: 'kyc', label: 'KYC' },
@@ -62,8 +81,13 @@ const frequentlyBookedArtists: ArtistData[] = [
         ],
         distance: '3.8 km away',
         experience: '10+ years',
-        rating: '4,890.2K',
-        portfolioColors: ['#98FB98', '#87CEEB', '#FFB6C1', '#DDA0DD'],
+        rating: '4.8(0.2K)',
+        portfolioImages: [
+            '/info/home/298d5512b1038ab125d881aa9937929c4a74d009.png',
+            '/info/home/catagory section/mahendi.png',
+            '/info/home/52e1909c9f0bc6c19f1d19860f5d1110a4d82585.png',
+            '/info/home/catagory section/nail.png',
+        ],
     },
 ];
 
@@ -72,7 +96,7 @@ const recentlyBookedArtists: ArtistData[] = [
     {
         id: '5',
         name: 'Kavya Ramesh',
-        avatarColor: '#FFB6C1',
+        avatarUrl: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150&h=150&fit=crop&crop=face',
         specialty: 'Hairstylist',
         badges: [
             { type: 'kyc', label: 'KYC' },
@@ -80,13 +104,18 @@ const recentlyBookedArtists: ArtistData[] = [
         ],
         distance: '4.5 km away',
         experience: '5+ years',
-        rating: '4,410.8K',
-        portfolioColors: ['#D4A574', '#8B7355', '#C9A86C', '#A0826D'],
+        rating: '4.4(1.8K)',
+        portfolioImages: [
+            '/info/home/dc70ace0b4a13e50170f19ceedc5b3c94e064c6f.png',
+            '/info/home/3d1bd4a1cacd7547f4bd8c65406c0d9830008248.png',
+            '/info/home/catagory section/hairstylist.png',
+            '/info/home/3daa4b9a59122c9b89963e9547aaaf5082f7cb3f.png',
+        ],
     },
     {
         id: '6',
         name: 'Shruti',
-        avatarColor: '#DDA0DD',
+        avatarUrl: 'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=150&h=150&fit=crop&crop=face',
         specialty: 'Makeup Artist',
         badges: [
             { type: 'kyc', label: 'KYC' },
@@ -94,13 +123,18 @@ const recentlyBookedArtists: ArtistData[] = [
         ],
         distance: '2.1 km away',
         experience: '3+ years',
-        rating: '4,712.3K',
-        portfolioColors: ['#B8860B', '#CD853F', '#DEB887', '#D2691E'],
+        rating: '4.7(2.3K)',
+        portfolioImages: [
+            '/info/home/catagory section/mackup.png',
+            '/info/home/3d1bd4a1cacd7547f4bd8c65406c0d9830008248.png',
+            '/info/home/dc70ace0b4a13e50170f19ceedc5b3c94e064c6f.png',
+            '/info/home/catagory section/nail.png',
+        ],
     },
     {
         id: '7',
         name: 'Nisha Prabhu',
-        avatarColor: '#F0E68C',
+        avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&h=150&fit=crop&crop=face',
         specialty: 'Saree Draping · Saree Pleating',
         badges: [
             { type: 'kyc', label: 'KYC' },
@@ -108,13 +142,18 @@ const recentlyBookedArtists: ArtistData[] = [
         ],
         distance: '1.9 km away',
         experience: '1+ years',
-        rating: '4,213.5K',
-        portfolioColors: ['#FFB6C1', '#DDA0DD', '#F0E68C', '#FFA07A'],
+        rating: '4.2(3.5K)',
+        portfolioImages: [
+            '/info/home/3daa4b9a59122c9b89963e9547aaaf5082f7cb3f.png',
+            '/info/home/catagory section/saree daping.png',
+            '/info/home/catagory section/saree plating.png',
+            '/info/home/3d1bd4a1cacd7547f4bd8c65406c0d9830008248.png',
+        ],
     },
     {
         id: '8',
         name: 'Aarti',
-        avatarColor: '#98FB98',
+        avatarUrl: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=150&h=150&fit=crop&crop=face',
         specialty: 'Mehendi Artist',
         badges: [
             { type: 'kyc', label: 'KYC' },
@@ -122,27 +161,75 @@ const recentlyBookedArtists: ArtistData[] = [
         ],
         distance: '3.8 km away',
         experience: '10+ years',
-        rating: '4,890.2K',
-        portfolioColors: ['#98FB98', '#87CEEB', '#FFB6C1', '#DDA0DD'],
+        rating: '4.8(0.2K)',
+        portfolioImages: [
+            '/info/home/298d5512b1038ab125d881aa9937929c4a74d009.png',
+            '/info/home/catagory section/mahendi.png',
+            '/info/home/52e1909c9f0bc6c19f1d19860f5d1110a4d82585.png',
+            '/info/home/catagory section/nail.png',
+        ],
     },
 ];
 
 const HomePage: React.FC = () => {
+    const [showLocationDialog, setShowLocationDialog] = useState(false);
+    const [locationName, setLocationName] = useState('Current location');
+
+    // Check if location is already cached; if not, show dialog
+    useEffect(() => {
+        const cached = getCachedLocation();
+        if (!cached) {
+            // Small delay for page to render first
+            const timer = setTimeout(() => {
+                setShowLocationDialog(true);
+            }, 500);
+            return () => clearTimeout(timer);
+        }
+    }, []);
+
+    const handleLocationClose = (location: { latitude: number; longitude: number } | null) => {
+        setShowLocationDialog(false);
+        if (location) {
+            setLocationName('Location detected');
+            // Location is already saved in localStorage by the hook
+            // TODO: Send to backend via API when endpoint is ready
+        }
+    };
+
     return (
         <div className="min-h-screen bg-white">
-            {/* Customer Home Navbar */}
-            <CustomerHomeNavbar />
+            {/* Location Dialog (mandatory on first visit) */}
+            <LocationDialog
+                isOpen={showLocationDialog}
+                onClose={handleLocationClose}
+            />
 
-            {/* Main Content */}
-            <main>
-                {/* Hero Section with Carousel */}
-                <section className="bg-[#FFE9F0] pt-6 pb-32">
+            {/* ===== HERO SECTION ===== */}
+            <section
+                className="relative flex flex-col overflow-hidden min-h-[85vh] md:min-h-screen"
+                style={{
+                    background: 'linear-gradient(180deg, #FFE9F0 0%, #FFF5F8 40%, #FFFFFF 100%)',
+                }}
+            >
+                {/* Navbar */}
+                <CustomerHomeNavbar locationName={locationName} />
+
+                {/* Service Category Icons - Mobile Only */}
+                <ServiceCategoryIcons />
+
+                {/* Carousel fills remaining space */}
+                <div className="flex-1 flex items-center relative">
                     <HeroCarousel />
-                </section>
 
-                {/* Search Overlay - Positioned over hero bottom */}
-                <SearchOverlay />
+                    {/* Search Overlay - Overlapping carousel on mobile, absolute on desktop */}
+                    <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-full md:bottom-6 z-40">
+                        <SearchOverlay />
+                    </div>
+                </div>
+            </section>
 
+            {/* ===== BELOW HERO CONTENT ===== */}
+            <main>
                 {/* Categories Section */}
                 <CategoriesSection />
 
@@ -163,6 +250,9 @@ const HomePage: React.FC = () => {
 
             {/* Footer */}
             <CustomerHomeFooter />
+
+            {/* Bottom Navigation Bar - Mobile Only */}
+            <BottomNavbar />
         </div>
     );
 };

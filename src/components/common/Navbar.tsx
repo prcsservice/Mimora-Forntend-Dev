@@ -14,12 +14,8 @@ function Navbar() {
             return;
         }
 
-        // Desktop: navigate as before
-        document.body.classList.add('page-transition-out');
-        setTimeout(() => {
-            navigate('/auth');
-            document.body.classList.remove('page-transition-out');
-        }, 400);
+        // Desktop: navigate directly — AnimatePresence handles the transition
+        navigate('/auth');
     };
 
     return (

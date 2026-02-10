@@ -53,12 +53,10 @@ const LoginBottomSheet: React.FC<LoginBottomSheetProps> = ({ isOpen, onClose }) 
     const handleGetStarted = () => {
         if (selectedProfile) {
             handleClose();
-            // Add exit animation class to the page
-            document.body.classList.add('page-transition-out');
+            // Navigate after bottom sheet close animation completes
             setTimeout(() => {
                 navigate(`/auth/${selectedProfile}/login`);
-                document.body.classList.remove('page-transition-out');
-            }, 400);
+            }, 350);
         }
     };
 

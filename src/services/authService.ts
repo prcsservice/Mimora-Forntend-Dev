@@ -1,5 +1,6 @@
 import { API_CONFIG } from '../config/api';
 import type { User } from '../types/auth.types';
+import { getCachedLocation } from '../hooks/useGeolocation';
 
 interface EmailOTPSendRequest {
   username: string;
@@ -56,11 +57,16 @@ class AuthService {
   // ===============================
   async authenticateWithOAuth(firebaseToken: string, userType: 'customer' | 'artist' = 'customer'): Promise<User> {
     const endpoint = userType === 'artist' ? '/auth/artist/oauth' : '/auth/customer/oauth';
+    const location = getCachedLocation();
     return this.fetchJSON(endpoint, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${firebaseToken}`,
       },
+      body: JSON.stringify({
+        latitude: location?.latitude,
+        longitude: location?.longitude,
+      }),
     });
   }
 
@@ -69,16 +75,20 @@ class AuthService {
   // Supports both customer and artist auth
   // ===============================
   async authenticateWithOTP(firebaseToken: string, name: string, userType: 'customer' | 'artist' = 'customer'): Promise<User> {
-    // Use userType to determine endpoint (backend may have /auth/artist/otp in the future)
     const endpoint = userType === 'artist'
-      ? '/auth/artist/otp'  // Future artist endpoint
+      ? '/auth/artist/otp'
       : API_CONFIG.ENDPOINTS.OTP_AUTH;
+    const location = getCachedLocation();
     return this.fetchJSON(endpoint, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${firebaseToken}`,
       },
-      body: JSON.stringify({ name }),
+      body: JSON.stringify({
+        name,
+        latitude: location?.latitude,
+        longitude: location?.longitude,
+      }),
     });
   }
 

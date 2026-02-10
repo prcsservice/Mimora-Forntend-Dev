@@ -1,6 +1,7 @@
 import { useEffect, lazy, Suspense, useState } from 'react'
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { AnimatePresence } from 'framer-motion'
 import Lenis from 'lenis'
 
 // Providers
@@ -8,6 +9,7 @@ import { AuthProvider } from './contexts/AuthContext'
 
 // Components
 import PageLoader from './components/common/PageLoader'
+import PageTransition from './components/common/PageTransition'
 import { RevealLoader } from './components/common/RevealLoader'
 import { Toaster } from './components/common/Toaster'
 
@@ -25,6 +27,40 @@ const queryClient = new QueryClient({
     },
   },
 })
+
+// Separate component so useLocation() is inside <Router>
+function AnimatedRoutes() {
+  const location = useLocation();
+
+  // Group auth sub-routes under a single key so navigating between
+  // /auth, /auth/customer/login, /auth/customer/signup, etc.
+  // does NOT trigger a full page exit/enter transition.
+  const getRouteKey = (pathname: string) => {
+    if (pathname.startsWith('/auth')) return '/auth';
+    return pathname;
+  };
+
+  return (
+    <AnimatePresence mode="wait">
+      <Suspense fallback={<PageLoader />} key={getRouteKey(location.pathname)}>
+        <Routes location={location}>
+          <Route path="/" element={<PageTransition><LandingPage /></PageTransition>} />
+
+          {/* Auth Routes - handled by AuthPage which reads the URL */}
+          <Route path="/auth" element={<PageTransition><AuthPage /></PageTransition>} />
+          <Route path="/auth/customer" element={<Navigate to="/auth/customer/login" replace />} />
+          <Route path="/auth/customer/login" element={<PageTransition><AuthPage /></PageTransition>} />
+          <Route path="/auth/customer/signup" element={<PageTransition><AuthPage /></PageTransition>} />
+          <Route path="/auth/artist" element={<Navigate to="/auth/artist/login" replace />} />
+          <Route path="/auth/artist/login" element={<PageTransition><AuthPage /></PageTransition>} />
+          <Route path="/auth/artist/signup" element={<PageTransition><AuthPage /></PageTransition>} />
+
+          <Route path="/home" element={<PageTransition><HomePage /></PageTransition>} />
+        </Routes>
+      </Suspense>
+    </AnimatePresence>
+  );
+}
 
 function App() {
   const [isLoading, setIsLoading] = useState(true);
@@ -62,22 +98,7 @@ function App() {
         <Router>
           {/* Main App Content - always rendered underneath */}
           <div className="min-h-screen bg-white">
-            <Suspense fallback={<PageLoader />}>
-              <Routes>
-                <Route path="/" element={<LandingPage />} />
-
-                {/* Auth Routes - handled by AuthPage which reads the URL */}
-                <Route path="/auth" element={<AuthPage />} />
-                <Route path="/auth/customer" element={<Navigate to="/auth/customer/login" replace />} />
-                <Route path="/auth/customer/login" element={<AuthPage />} />
-                <Route path="/auth/customer/signup" element={<AuthPage />} />
-                <Route path="/auth/artist" element={<Navigate to="/auth/artist/login" replace />} />
-                <Route path="/auth/artist/login" element={<AuthPage />} />
-                <Route path="/auth/artist/signup" element={<AuthPage />} />
-
-                <Route path="/home" element={<HomePage />} />
-              </Routes>
-            </Suspense>
+            <AnimatedRoutes />
           </div>
 
           {/* Reveal Loader Overlay - shrinks away to reveal content */}

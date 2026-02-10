@@ -9,7 +9,7 @@ interface AuthLayoutProps {
 const AuthLayout: React.FC<AuthLayoutProps> = ({ children }) => {
     return (
         <div
-            className="flex flex-col lg:flex-row w-full min-h-screen lg:h-screen lg:max-h-screen overflow-hidden page-transition-in"
+            className="flex flex-col lg:flex-row w-full min-h-screen lg:h-screen lg:max-h-screen overflow-hidden"
             style={{
                 maxWidth: '1440px',
                 margin: '0 auto',
