@@ -17,6 +17,7 @@ import { Toaster } from './components/common/Toaster'
 const LandingPage = lazy(() => import('./pages/LandingPage'))
 const AuthPage = lazy(() => import('./pages/AuthPage'))
 const HomePage = lazy(() => import('./pages/HomePage'))
+const ArtistHomePage = lazy(() => import('./pages/ArtistHomePage'))
 
 // Create a client for React Query
 const queryClient = new QueryClient({
@@ -56,6 +57,7 @@ function AnimatedRoutes() {
           <Route path="/auth/artist/signup" element={<PageTransition><AuthPage /></PageTransition>} />
 
           <Route path="/home" element={<PageTransition><HomePage /></PageTransition>} />
+          <Route path="/artist" element={<PageTransition><ArtistHomePage /></PageTransition>} />
         </Routes>
       </Suspense>
     </AnimatePresence>

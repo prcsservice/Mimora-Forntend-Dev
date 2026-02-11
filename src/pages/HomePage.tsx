@@ -9,7 +9,10 @@ import CustomerHomeFooter from '../components/home/CustomerHomeFooter';
 import BottomNavbar from '../components/home/BottomNavbar';
 import LocationDialog from '../components/home/LocationDialog';
 import { getCachedLocation } from '../hooks/useGeolocation';
+import { authService } from '../services/authService';
+import { getAuth } from 'firebase/auth';
 import type { ArtistData } from '../components/home/ArtistCard';
+import type { UserLocationUpdate } from '../types/auth.types';
 
 // Sample data for Frequently Booked artists
 const frequentlyBookedArtists: ArtistData[] = [
@@ -177,9 +180,18 @@ const HomePage: React.FC = () => {
 
     // Check if location is already cached; if not, show dialog
     useEffect(() => {
-        const cached = getCachedLocation();
-        if (!cached) {
-            // Small delay for page to render first
+        const cachedAddress = localStorage.getItem('userAddress');
+        const cachedLocation = getCachedLocation();
+
+        if (cachedAddress) {
+            try {
+                const parsed = JSON.parse(cachedAddress);
+                setLocationName(parsed.city || 'Location saved');
+            } catch {
+                // ignore
+            }
+        } else if (!cachedLocation) {
+            // No cached address or coordinates - show dialog
             const timer = setTimeout(() => {
                 setShowLocationDialog(true);
             }, 500);
@@ -187,12 +199,20 @@ const HomePage: React.FC = () => {
         }
     }, []);
 
-    const handleLocationClose = (location: { latitude: number; longitude: number } | null) => {
+    const handleLocationClose = async (locationData: UserLocationUpdate | null) => {
         setShowLocationDialog(false);
-        if (location) {
-            setLocationName('Location detected');
-            // Location is already saved in localStorage by the hook
-            // TODO: Send to backend via API when endpoint is ready
+        if (locationData) {
+            setLocationName(locationData.city || 'Location saved');
+            // Send to backend
+            try {
+                const auth = getAuth();
+                const token = await auth.currentUser?.getIdToken();
+                if (token) {
+                    await authService.updateLocation(token, locationData);
+                }
+            } catch (err) {
+                console.error('Failed to update location on backend:', err);
+            }
         }
     };
 
@@ -212,7 +232,7 @@ const HomePage: React.FC = () => {
                 }}
             >
                 {/* Navbar */}
-                <CustomerHomeNavbar locationName={locationName} />
+                <CustomerHomeNavbar locationName={locationName} onLocationClick={() => setShowLocationDialog(true)} />
 
                 {/* Service Category Icons - Mobile Only */}
                 <ServiceCategoryIcons />

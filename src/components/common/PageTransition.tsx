@@ -22,7 +22,7 @@ const pageVariants = {
 
 const pageTransition = {
     duration: 0.4,
-    ease: [0.4, 0, 0.2, 1], // Material Design ease-in-out
+    ease: [0.4, 0, 0.2, 1] as const, // Material Design ease-in-out
 };
 
 const PageTransition: React.FC<PageTransitionProps> = ({ children }) => {

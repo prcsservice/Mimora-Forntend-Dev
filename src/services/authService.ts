@@ -1,5 +1,5 @@
 import { API_CONFIG } from '../config/api';
-import type { User } from '../types/auth.types';
+import type { User, UserLocationUpdate } from '../types/auth.types';
 import { getCachedLocation } from '../hooks/useGeolocation';
 
 interface EmailOTPSendRequest {
@@ -58,6 +58,7 @@ class AuthService {
   async authenticateWithOAuth(firebaseToken: string, userType: 'customer' | 'artist' = 'customer'): Promise<User> {
     const endpoint = userType === 'artist' ? '/auth/artist/oauth' : '/auth/customer/oauth';
     const location = getCachedLocation();
+    const cachedAddr = this.getCachedAddress();
     return this.fetchJSON(endpoint, {
       method: 'POST',
       headers: {
@@ -66,6 +67,7 @@ class AuthService {
       body: JSON.stringify({
         latitude: location?.latitude,
         longitude: location?.longitude,
+        ...cachedAddr,
       }),
     });
   }
@@ -79,6 +81,7 @@ class AuthService {
       ? '/auth/artist/otp'
       : API_CONFIG.ENDPOINTS.OTP_AUTH;
     const location = getCachedLocation();
+    const cachedAddr = this.getCachedAddress();
     return this.fetchJSON(endpoint, {
       method: 'POST',
       headers: {
@@ -88,8 +91,28 @@ class AuthService {
         name,
         latitude: location?.latitude,
         longitude: location?.longitude,
+        ...cachedAddr,
       }),
     });
+  }
+
+  // Helper to get cached address from localStorage
+  private getCachedAddress(): Record<string, string> {
+    try {
+      const cached = localStorage.getItem('userAddress');
+      if (cached) {
+        const addr = JSON.parse(cached);
+        return {
+          flat_building: addr.flat_building || '',
+          street_area: addr.street_area || '',
+          landmark: addr.landmark || '',
+          pincode: addr.pincode || '',
+          city: addr.city || '',
+          state: addr.state || '',
+        };
+      }
+    } catch { /* ignore */ }
+    return {};
   }
 
   // ===============================
@@ -100,6 +123,32 @@ class AuthService {
       method: 'POST',
       body: JSON.stringify({ identifier, type }),
     });
+  }
+
+  // ===============================
+  // UPDATE LOCATION
+  // ===============================
+  async updateLocation(
+    firebaseToken: string,
+    payload: UserLocationUpdate,
+    userType: 'customer' | 'artist' = 'customer'
+  ): Promise<User> {
+    const endpoint = userType === 'artist'
+      ? '/auth/artist/location'
+      : '/auth/customer/location';
+
+    const result = await this.fetchJSON(endpoint, {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${firebaseToken}`,
+      },
+      body: JSON.stringify(payload),
+    });
+
+    // Cache the full address in localStorage
+    localStorage.setItem('userAddress', JSON.stringify(payload));
+
+    return result;
   }
 }
 

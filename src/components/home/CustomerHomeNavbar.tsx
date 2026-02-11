@@ -3,6 +3,7 @@ import { Heart, Bell, Menu, MapPin, ChevronDown } from 'lucide-react';
 
 interface CustomerHomeNavbarProps {
     locationName?: string;
+    onLocationClick?: () => void;
 }
 
 type TabId = 'instant' | 'flexi' | 'workshops';
@@ -13,7 +14,13 @@ const TABS: { id: TabId; label: string; icon: string; comingSoon?: boolean }[] =
     { id: 'workshops', label: 'Workshops', icon: '/info/home/nav2.png', comingSoon: true },
 ];
 
-const CustomerHomeNavbar: React.FC<CustomerHomeNavbarProps> = ({ locationName = 'Current location' }) => {
+// Truncate location name for display
+const truncateLocation = (name: string, maxLen: number = 18): string => {
+    if (name.length <= maxLen) return name;
+    return name.slice(0, maxLen).trimEnd() + '…';
+};
+
+const CustomerHomeNavbar: React.FC<CustomerHomeNavbarProps> = ({ locationName = 'Current location', onLocationClick }) => {
     const [activeTab, setActiveTab] = useState<TabId>('instant');
 
     // Refs for the tab container and each tab button (for sliding underline)
@@ -63,9 +70,12 @@ const CustomerHomeNavbar: React.FC<CustomerHomeNavbarProps> = ({ locationName = 
                     </a>
 
                     {/* Location Display */}
-                    <button className="flex items-center gap-1.5 text-[13px] text-[#6B6B6B] hover:text-[#1E1E1E] transition-colors group">
+                    <button
+                        onClick={onLocationClick}
+                        className="flex items-center gap-1.5 text-[13px] text-[#6B6B6B] hover:text-[#1E1E1E] transition-colors group"
+                    >
                         <MapPin className="w-3.5 h-3.5 text-[#E84A7F]" />
-                        <span className="font-medium">{locationName}</span>
+                        <span className="font-medium">{truncateLocation(locationName)}</span>
                         <ChevronDown className="w-3 h-3 opacity-60 group-hover:opacity-100 transition-opacity" />
                     </button>
                 </div>
@@ -130,9 +140,12 @@ const CustomerHomeNavbar: React.FC<CustomerHomeNavbarProps> = ({ locationName = 
             {/* Mobile Topbar */}
             <div className="md:hidden flex items-center justify-between h-14 px-4">
                 {/* Left: Location */}
-                <button className="flex items-center gap-1.5 text-[13px] text-[#1E1E1E]">
+                <button
+                    onClick={onLocationClick}
+                    className="flex items-center gap-1.5 text-[13px] text-[#1E1E1E]"
+                >
                     <MapPin className="w-4 h-4 text-[#6B6B6B]" />
-                    <span className="font-medium">Home</span>
+                    <span className="font-medium">{truncateLocation(locationName, 14)}</span>
                     <ChevronDown className="w-3.5 h-3.5 text-[#6B6B6B]" />
                 </button>
 
@@ -150,4 +163,3 @@ const CustomerHomeNavbar: React.FC<CustomerHomeNavbarProps> = ({ locationName = 
 };
 
 export default CustomerHomeNavbar;
-

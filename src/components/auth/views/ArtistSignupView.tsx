@@ -5,6 +5,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import SuccessAnimation from '@/components/common/SuccessAnimation';
 import { storage } from '@/firebase';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { useGeolocation } from '@/hooks/useGeolocation';
 
 // Types
 type SignupMethod = 'phone' | 'email' | 'google' | null;
@@ -925,6 +926,8 @@ const ArtistSignupView: React.FC = () => {
     const [otpSuccess, setOtpSuccess] = useState<string>('');
     const [isUploadingImage, setIsUploadingImage] = useState(false);
     const profilePicInputRef = useRef<HTMLInputElement>(null);
+    const { location: geoLocation, loading: geoLoading, error: geoError, requestLocation } = useGeolocation();
+    const [locationCaptured, setLocationCaptured] = useState(false);
 
     const [formData, setFormData] = useState<FormData>({
         fullName: '',
@@ -1000,6 +1003,31 @@ const ArtistSignupView: React.FC = () => {
             }
         }
     }, []);
+
+    // Auto-fill address from localStorage('userAddress') if available
+    useEffect(() => {
+        if (subStep === 4) {
+            const cachedAddr = localStorage.getItem('userAddress');
+            if (cachedAddr) {
+                try {
+                    const addr = JSON.parse(cachedAddr);
+                    setFormData(prev => ({
+                        ...prev,
+                        address: {
+                            flatNo: addr.flat_building || prev.address.flatNo || '',
+                            street: addr.street_area || prev.address.street || '',
+                            landmark: addr.landmark || prev.address.landmark || '',
+                            pincode: addr.pincode || prev.address.pincode || '',
+                            city: addr.city || prev.address.city || '',
+                            state: addr.state || prev.address.state || '',
+                            location: prev.address.location,
+                        },
+                    }));
+                    setLocationCaptured(true);
+                } catch { /* ignore */ }
+            }
+        }
+    }, [subStep]);
 
     const updateFormData = (updates: Partial<FormData>) => {
         setFormData(prev => ({ ...prev, ...updates }));
@@ -1964,52 +1992,57 @@ const ArtistSignupView: React.FC = () => {
                             {/* SUBSTEP 4: Address Details */}
                             {subStep === 4 && (
                                 <div className="space-y-4">
-                                    {/* Get Current Location */}
-                                    <div className="p-4 border border-gray-200 rounded-xl bg-gray-50">
-                                        <button
-                                            className="flex items-center gap-2 text-[#E91E63] font-medium"
-                                            onClick={() => {
-                                                if (navigator.geolocation) {
-                                                    navigator.geolocation.getCurrentPosition(
-                                                        (position) => {
-                                                            updateFormData({
-                                                                address: {
-                                                                    ...formData.address,
-                                                                    location: {
-                                                                        lat: position.coords.latitude,
-                                                                        lng: position.coords.longitude
-                                                                    }
-                                                                }
-                                                            });
-                                                        },
-                                                        (error) => console.error('Geolocation error:', error)
-                                                    );
-                                                }
-                                            }}
-                                        >
-                                            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-                                            </svg>
-                                            Get Current Location
-                                        </button>
-                                        {formData.address.location && (
-                                            <p className="text-xs text-gray-500 mt-2">Location captured ✓</p>
+                                    {/* Current Location Button */}
+                                    <button
+                                        type="button"
+                                        disabled={geoLoading}
+                                        onClick={() => {
+                                            requestLocation();
+                                            setLocationCaptured(false);
+                                        }}
+                                        className="w-full flex items-center justify-center gap-2 py-3 px-4 border border-gray-200 rounded-full bg-white hover:bg-gray-50 transition-colors text-sm font-medium text-gray-800 disabled:opacity-60"
+                                    >
+                                        {geoLoading ? (
+                                            <>
+                                                <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                                                </svg>
+                                                Getting location...
+                                            </>
+                                        ) : (locationCaptured || geoLocation) ? (
+                                            <>
+                                                <svg className="w-4 h-4 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                                                </svg>
+                                                Location captured
+                                            </>
+                                        ) : (
+                                            <>
+                                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                                    <circle cx="12" cy="12" r="3" />
+                                                    <path d="M12 2v2m0 16v2M2 12h2m16 0h2m-3.3-6.7-1.4 1.4M6.7 17.3l-1.4 1.4m0-13.4 1.4 1.4m10.6 10.6 1.4 1.4" />
+                                                </svg>
+                                                Current location
+                                            </>
                                         )}
-                                    </div>
+                                    </button>
+                                    {geoError && (
+                                        <p className="text-xs text-red-500 text-center">{geoError}</p>
+                                    )}
 
                                     {/* Flat/Building */}
                                     <InputField
-                                        label="Flat / Building No."
-                                        placeholder="Eg. 12A, Crystal Tower"
+                                        label="Flat, House no., Building, Company, Apartment"
+                                        placeholder="Eg. 14/13"
                                         value={formData.address.flatNo}
                                         onChange={(v) => updateFormData({ address: { ...formData.address, flatNo: v } })}
                                     />
 
                                     {/* Street */}
                                     <InputField
-                                        label="Street / Area"
-                                        placeholder="Eg. MG Road"
+                                        label="Area, Street, Sector, Village"
+                                        placeholder="Eg. Anna Nagar"
                                         value={formData.address.street}
                                         onChange={(v) => updateFormData({ address: { ...formData.address, street: v } })}
                                         required
@@ -2018,7 +2051,7 @@ const ArtistSignupView: React.FC = () => {
                                     {/* Landmark */}
                                     <InputField
                                         label="Landmark"
-                                        placeholder="Eg. Near City Mall"
+                                        placeholder="Eg. HDFC bank opposite"
                                         value={formData.address.landmark}
                                         onChange={(v) => updateFormData({ address: { ...formData.address, landmark: v } })}
                                     />
@@ -2027,14 +2060,14 @@ const ArtistSignupView: React.FC = () => {
                                     <div className="grid grid-cols-2 gap-4">
                                         <InputField
                                             label="Pincode"
-                                            placeholder="Eg. 560001"
+                                            placeholder="Eg. 600024"
                                             value={formData.address.pincode}
                                             onChange={(v) => updateFormData({ address: { ...formData.address, pincode: v } })}
                                             required
                                         />
                                         <InputField
-                                            label="City"
-                                            placeholder="Eg. Bangalore"
+                                            label="Town/City"
+                                            placeholder="Eg. Chennai"
                                             value={formData.address.city}
                                             onChange={(v) => updateFormData({ address: { ...formData.address, city: v } })}
                                             required
@@ -2044,9 +2077,10 @@ const ArtistSignupView: React.FC = () => {
                                     {/* State */}
                                     <InputField
                                         label="State"
-                                        placeholder="Eg. Karnataka"
+                                        placeholder="Eg. Tamil Nadu"
                                         value={formData.address.state}
                                         onChange={(v) => updateFormData({ address: { ...formData.address, state: v } })}
+                                        required
                                     />
                                 </div>
                             )}
