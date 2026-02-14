@@ -80,6 +80,7 @@ const LoginView: React.FC<LoginViewProps> = ({
         isLoading,
         error,
         clearError,
+        userType,
     } = useAuth();
 
     const [touched, setTouched] = useState({
@@ -165,11 +166,21 @@ const LoginView: React.FC<LoginViewProps> = ({
         try {
             // First, check if user exists
             const identifier = method === 'email' ? email : `${countryCode}${phone}`;
-            const { exists } = await authService.checkUserExists(identifier, method);
+            // Use userType from context (default to 'customer' if null)
+            const currentType = userType || 'customer';
+
+            const { exists, user_type: existingType } = await authService.checkUserExists(identifier, method, currentType);
 
             if (!exists) {
                 // User doesn't exist - show error with toast
                 const errorMsg = 'No account found. Please create an account first.';
+                toast.error(errorMsg);
+                throw new Error(errorMsg);
+            }
+
+            // Check for role mismatch (specifically Customer trying to login as Artist)
+            if (currentType === 'artist' && existingType === 'customer') {
+                const errorMsg = 'You have a customer account. Please Sign Up to become an artist.';
                 toast.error(errorMsg);
                 throw new Error(errorMsg);
             }
@@ -180,6 +191,7 @@ const LoginView: React.FC<LoginViewProps> = ({
                 await sendPhoneOTP(fullPhoneNumber);
             } else {
                 // Send Email OTP via Backend (use email as username for login)
+                // For artist login, we still need to send the email
                 await sendEmailOTP(email, email.split('@')[0]);
             }
             setOtpSent(true);
@@ -188,7 +200,7 @@ const LoginView: React.FC<LoginViewProps> = ({
         } catch (err: any) {
             console.error('Failed to send OTP:', err);
         }
-    }, [method, isContactValid, isLoading, countryCode, phone, email, sendPhoneOTP, sendEmailOTP, clearError]);
+    }, [method, isContactValid, isLoading, countryCode, phone, email, sendPhoneOTP, sendEmailOTP, clearError, userType]);
 
     // Resend OTP
     const handleResendOtp = useCallback(async () => {

@@ -18,6 +18,7 @@ const LandingPage = lazy(() => import('./pages/LandingPage'))
 const AuthPage = lazy(() => import('./pages/AuthPage'))
 const HomePage = lazy(() => import('./pages/HomePage'))
 const ArtistHomePage = lazy(() => import('./pages/ArtistHomePage'))
+const ProfileCompletionGuard = lazy(() => import('./components/auth/ProfileCompletionGuard'))
 
 // Create a client for React Query
 const queryClient = new QueryClient({
@@ -57,7 +58,8 @@ function AnimatedRoutes() {
           <Route path="/auth/artist/signup" element={<PageTransition><AuthPage /></PageTransition>} />
 
           <Route path="/home" element={<PageTransition><HomePage /></PageTransition>} />
-          <Route path="/artist" element={<PageTransition><ArtistHomePage /></PageTransition>} />
+          <Route path="/artist" element={<PageTransition><ProfileCompletionGuard><ArtistHomePage /></ProfileCompletionGuard></PageTransition>} />
+          <Route path="/artist/home" element={<PageTransition><ProfileCompletionGuard><ArtistHomePage /></ProfileCompletionGuard></PageTransition>} />
         </Routes>
       </Suspense>
     </AnimatePresence>

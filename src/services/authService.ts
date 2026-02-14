@@ -33,9 +33,13 @@ class AuthService {
 
   // ===============================
   // EMAIL OTP – SEND OTP
+  // Supports both customer and artist auth
   // ===============================
-  async sendEmailOTP(payload: EmailOTPSendRequest): Promise<{ message: string }> {
-    return this.fetchJSON('/auth/customer/email', {
+  async sendEmailOTP(payload: EmailOTPSendRequest, userType: 'customer' | 'artist' = 'customer'): Promise<{ message: string }> {
+    const endpoint = userType === 'artist'
+      ? '/auth/artist/email'
+      : '/auth/customer/email';
+    return this.fetchJSON(endpoint, {
       method: 'POST',
       body: JSON.stringify(payload),
     });
@@ -43,9 +47,13 @@ class AuthService {
 
   // ===============================
   // EMAIL OTP – VERIFY OTP
+  // Supports both customer and artist auth
   // ===============================
-  async verifyEmailOTP(payload: EmailOTPVerifyRequest): Promise<User> {
-    return this.fetchJSON('/auth/customer/email/verify', {
+  async verifyEmailOTP(payload: EmailOTPVerifyRequest, userType: 'customer' | 'artist' = 'customer'): Promise<User> {
+    const endpoint = userType === 'artist'
+      ? '/auth/artist/email/verify'
+      : '/auth/customer/email/verify';
+    return this.fetchJSON(endpoint, {
       method: 'POST',
       body: JSON.stringify(payload),
     });
@@ -117,9 +125,17 @@ class AuthService {
 
   // ===============================
   // CHECK USER EXISTS
+  // Supports both customer and artist checks
   // ===============================
-  async checkUserExists(identifier: string, type: 'email' | 'phone'): Promise<{ exists: boolean; user_type: string | null }> {
-    return this.fetchJSON('/auth/customer/check', {
+  async checkUserExists(
+    identifier: string,
+    type: 'email' | 'phone',
+    userType: 'customer' | 'artist' = 'customer'
+  ): Promise<{ exists: boolean; user_type: string | null }> {
+    const endpoint = userType === 'artist'
+      ? '/auth/artist/check'
+      : '/auth/customer/check';
+    return this.fetchJSON(endpoint, {
       method: 'POST',
       body: JSON.stringify({ identifier, type }),
     });
@@ -149,6 +165,44 @@ class AuthService {
     localStorage.setItem('userAddress', JSON.stringify(payload));
 
     return result;
+  }
+  // ===============================
+  // COMPLETE ARTIST PROFILE
+  // Called after initial auth to submit all profile data
+  // ===============================
+  async completeArtistProfile(profileData: {
+    phone_number?: string;
+    birthdate?: string;  // DD/MM/YYYY
+    gender?: string;
+    experience?: string;
+    bio?: string;
+    profile_pic_url?: string;
+    name?: string;
+    username?: string;
+    how_did_you_learn?: string;
+    certificate_url?: string;
+    profession?: string[];
+    flat_building?: string;
+    street_area?: string;
+    landmark?: string;
+    pincode?: string;
+    city?: string;
+    state?: string;
+    latitude?: number;
+    longitude?: number;
+  }): Promise<User> {
+    const token = localStorage.getItem('firebaseToken');
+    if (!token) {
+      throw new Error('Not authenticated. Please log in first.');
+    }
+
+    return this.fetchJSON('/auth/artist/profile', {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(profileData),
+    });
   }
 }
 

@@ -85,6 +85,49 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         }
     }, []);
 
+    // Session timeout check - monitor token expiry
+    useEffect(() => {
+        const checkTokenExpiry = () => {
+            const token = localStorage.getItem('firebaseToken');
+            if (!token) return;
+
+            try {
+                // Decode JWT payload (without verification, just to read expiry)
+                const base64Url = token.split('.')[1];
+                const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+                const payload = JSON.parse(window.atob(base64));
+
+                if (payload.exp) {
+                    const expiryTime = payload.exp * 1000; // Convert to milliseconds
+                    const now = Date.now();
+
+                    // If token expired, logout
+                    if (expiryTime < now) {
+                        toast.error('Your session has expired. Please login again.');
+                        logout();
+                    }
+                    // If token expires in less than 1 hour, show warning
+                    else if (expiryTime - now < 60 * 60 * 1000) {
+                        const minutesLeft = Math.floor((expiryTime - now) / (60 * 1000));
+                        if (minutesLeft <= 10) {
+                            toast.warning(`Your session will expire in ${minutesLeft} minutes.`);
+                        }
+                    }
+                }
+            } catch (err) {
+                console.error('Failed to check token expiry:', err);
+            }
+        };
+
+        // Check immediately
+        checkTokenExpiry();
+
+        // Check every 5 minutes
+        const interval = setInterval(checkTokenExpiry, 5 * 60 * 1000);
+
+        return () => clearInterval(interval);
+    }, [state.isAuthenticated]);
+
     // Helper to set loading & clear error
     const startLoading = useCallback((action: string = 'loading') => {
         setState(prev => ({ ...prev, isLoading: true, loadingAction: action, error: null }));
@@ -225,7 +268,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     const sendEmailOTP = useCallback(async (email: string, username: string) => {
         startLoading('sending-otp');
         try {
-            await authService.sendEmailOTP({ email, username });
+            await authService.sendEmailOTP({ email, username }, state.userType || 'customer');
             setState(prev => ({ ...prev, isLoading: false, loadingAction: null }));
             toast.success('OTP sent to your email!');
         } catch (err: any) {
@@ -233,12 +276,12 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             setError(err.message || 'Failed to send email OTP');
             toast.error('Failed to send OTP');
         }
-    }, [startLoading, setError]);
+    }, [startLoading, setError, state.userType]);
 
     const verifyEmailOTP = useCallback(async (email: string, otp: string) => {
         startLoading('verifying-otp');
         try {
-            const user = await authService.verifyEmailOTP({ email, otp });
+            const user = await authService.verifyEmailOTP({ email, otp }, state.userType || 'customer');
             // Backend returns a Firebase custom token in user.token
             const firebaseToken = user.token || 'email-otp-session';
             toast.success('Welcome to Mimora!');
@@ -248,7 +291,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             setError(err.message || 'Failed to verify email OTP');
             toast.error('Invalid OTP. Please try again.');
         }
-    }, [startLoading, setError, completeAuth]);
+    }, [startLoading, setError, completeAuth, state.userType]);
 
     // ============ Logout ============
     const logout = useCallback(() => {

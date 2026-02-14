@@ -32,16 +32,18 @@ const AuthPage: React.FC = () => {
         goToSuccess,
     } = useAuthFlow();
 
-    // Redirect to home when authenticated (Airbnb/Uber style - simple redirect)
+    // Redirect to appropriate home when authenticated
+    // EXCEPTION: Don't redirect on artist signup page — artist must complete full registration first
     useEffect(() => {
-        if (isAuthenticated) {
-            // Simple redirect without complex animation
-            navigate('/home', { replace: true });
+        if (isAuthenticated && location.pathname !== '/auth/artist/signup') {
+            const destination = userType === 'artist' ? '/artist/home' : '/home';
+            navigate(destination, { replace: true });
         }
-    }, [isAuthenticated, navigate]);
+    }, [isAuthenticated, navigate, userType, location.pathname]);
 
     // Show loading state while checking auth or redirecting
-    if (isAuthenticated) {
+    // Skip this on artist signup — artist stays on form even after OTP verification
+    if (isAuthenticated && location.pathname !== '/auth/artist/signup') {
         return (
             <div className="min-h-screen bg-[#F8A5B8] flex flex-col items-center justify-center">
                 <img

@@ -6,6 +6,10 @@ import SuccessAnimation from '@/components/common/SuccessAnimation';
 import { storage } from '@/firebase';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { useGeolocation } from '@/hooks/useGeolocation';
+import { authService } from '@/services/authService';
+import { toast } from 'sonner';
+import { getErrorMessage, validateFile } from '@/utils/errorHandling';
+import { uploadProfilePicture, uploadCertificate } from '@/services/uploadService';
 
 // Types
 type SignupMethod = 'phone' | 'email' | 'google' | null;
@@ -910,7 +914,12 @@ const ProgressBar: React.FC<{ current: number; total: number }> = ({ current, to
 // Main Component
 const ArtistSignupView: React.FC = () => {
     const navigate = useNavigate();
-    const { loginWithGoogle, sendPhoneOTP, verifyPhoneOTP, sendEmailOTP, verifyEmailOTP, isLoading, error } = useAuth();
+    const { loginWithGoogle, sendPhoneOTP, verifyPhoneOTP, sendEmailOTP, verifyEmailOTP, isLoading, error, setUserType } = useAuth();
+
+    // Set user type to artist on mount
+    useEffect(() => {
+        setUserType('artist');
+    }, [setUserType]);
 
     // State
     const [signupMethod, setSignupMethod] = useState<SignupMethod>(null);
@@ -1192,6 +1201,18 @@ const ArtistSignupView: React.FC = () => {
         setOtpSuccess('');
         try {
             const fullPhone = `${formData.countryCode}${formData.phone}`;
+
+            // Check if user exists
+            const { exists, user_type: existingType } = await authService.checkUserExists(fullPhone, 'phone', 'artist');
+
+            if (exists && existingType === 'artist') {
+                throw new Error('Account already exists. Please login instead.');
+            }
+
+            if (exists && existingType === 'customer') {
+                toast.info('We found your customer account! Proceeding to create your artist profile.');
+            }
+
             await sendPhoneOTP(fullPhone);
             setOtpSent(true);
             setOtpSuccess('OTP sent to your phone!');
@@ -1207,6 +1228,11 @@ const ArtistSignupView: React.FC = () => {
         setOtpError('');
         setOtpSuccess('');
         try {
+            // Use AuthContext's verifyPhoneOTP but DON'T let it redirect
+            // We need Firebase confirmation first, then call backend
+            if (!formData.otp || formData.otp.length < 6) {
+                throw new Error('Please enter a valid 6-digit OTP');
+            }
             await verifyPhoneOTP(formData.otp, formData.fullName);
             setPhoneVerified(true);
             setOtpSent(false);
@@ -1223,6 +1249,17 @@ const ArtistSignupView: React.FC = () => {
         setOtpError('');
         setOtpSuccess('');
         try {
+            // Check if user exists
+            const { exists, user_type: existingType } = await authService.checkUserExists(formData.email, 'email', 'artist');
+
+            if (exists && existingType === 'artist') {
+                throw new Error('Account already exists. Please login instead.');
+            }
+
+            if (exists && existingType === 'customer') {
+                toast.info('We found your customer account! Proceeding to create your artist profile.');
+            }
+
             await sendEmailOTP(formData.email, formData.fullName || 'User');
             setOtpSent(true);
             setOtpSuccess('OTP sent to your email!');
@@ -1238,7 +1275,18 @@ const ArtistSignupView: React.FC = () => {
         setOtpError('');
         setOtpSuccess('');
         try {
-            await verifyEmailOTP(formData.email, formData.otp);
+            // Call authService DIRECTLY instead of AuthContext's verifyEmailOTP
+            // This prevents completeAuth from firing and redirecting to /home
+            const user = await authService.verifyEmailOTP(
+                { email: formData.email, otp: formData.otp },
+                'artist'
+            );
+
+            // Store the firebase token for later profile completion
+            if (user.token) {
+                localStorage.setItem('firebaseToken', user.token);
+            }
+
             setEmailVerified(true);
             setOtpSent(false);
             updateFormData({ otp: '' });
@@ -1268,30 +1316,61 @@ const ArtistSignupView: React.FC = () => {
     const handleSaveAndContinue = async () => {
         setIsSaving(true);
         try {
-            // Simulate API call
-            await new Promise(resolve => setTimeout(resolve, 1000));
-
-            // Save to localStorage
-            const progress = {
-                formData,
-                subStep: subStep < 4 ? subStep + 1 : subStep,
-                formStep,
-                signupMethod,
-                phoneVerified,
-                emailVerified
-            };
-            localStorage.setItem('artist_signup_data', JSON.stringify(progress));
-
-            // Move to next substep or show success
             if (subStep < 4) {
+                // Save progress to localStorage and move to next step
+                const progress = {
+                    formData,
+                    subStep: subStep + 1,
+                    formStep,
+                    signupMethod,
+                    phoneVerified,
+                    emailVerified
+                };
+                localStorage.setItem('artist_signup_data', JSON.stringify(progress));
                 setSubStep(prev => prev + 1);
                 window.scrollTo({ top: 0, behavior: 'smooth' });
             } else {
-                // Final step completed
+                // Final step - submit complete profile to backend
+                const profileData = {
+                    name: formData.fullName,
+                    phone_number: `${formData.countryCode}${formData.phone.replace(/\s/g, '')}`,
+                    birthdate: formData.birthday,  // DD/MM/YYYY
+                    gender: formData.gender,
+                    experience: formData.experience,
+                    bio: formData.bio,
+                    profile_pic_url: formData.profilePicUrl,
+                    how_did_you_learn: formData.howDidYouLearn,
+                    certificate_url: formData.certificateUrl,
+                    flat_building: formData.address.flatNo,
+                    street_area: formData.address.street,
+                    landmark: formData.address.landmark,
+                    pincode: formData.address.pincode,
+                    city: formData.address.city,
+                    state: formData.address.state,
+                    latitude: formData.address.location?.lat,
+                    longitude: formData.address.location?.lng,
+                };
+
+                // Call profile completion endpoint
+                const updatedArtist = await authService.completeArtistProfile(profileData);
+
+                // Update user in localStorage
+                localStorage.setItem('user', JSON.stringify(updatedArtist));
+
+                // Clear saved signup progress
+                localStorage.removeItem('artist_signup_data');
+
+                toast.success('Profile completed successfully!');
                 setShowSuccess(true);
+
+                // Navigate to home after success animation
+                setTimeout(() => {
+                    navigate('/artist/home');
+                }, 2000);
             }
-        } catch (error) {
+        } catch (error: any) {
             console.error('Error saving progress:', error);
+            toast.error(error.message || 'Failed to save profile. Please try again.');
         } finally {
             setIsSaving(false);
         }
