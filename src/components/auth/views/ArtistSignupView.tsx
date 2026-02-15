@@ -3,17 +3,19 @@ import Lenis from 'lenis';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import SuccessAnimation from '@/components/common/SuccessAnimation';
-import { storage } from '@/firebase';
+import { storage, auth as firebaseAuth } from '@/firebase';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
 import { useGeolocation } from '@/hooks/useGeolocation';
+import ArtistProfilePreview from '@/components/auth/ArtistProfilePreview';
 import { authService } from '@/services/authService';
 import { toast } from 'sonner';
-import { getErrorMessage, validateFile } from '@/utils/errorHandling';
-import { uploadProfilePicture, uploadCertificate } from '@/services/uploadService';
+import { getErrorMessage } from '@/utils/errorHandling';
+import { uploadProfilePicture, uploadCertificate, uploadPortfolioImage } from '@/services/uploadService';
 
 // Types
 type SignupMethod = 'phone' | 'email' | 'google' | null;
-type FormStep = 'method-select' | 'otp-verify' | 'details-form';
+type FormStep = 'method-select' | 'otp-verify' | 'details-form' | 'booking-modes' | 'portfolio' | 'bank-details';
 
 interface FormData {
     fullName: string;
@@ -854,6 +856,7 @@ interface StepCardProps {
     icon: React.ReactNode;
     isActive: boolean;
     isCompleted: boolean;
+    onContinue?: () => void;
 }
 
 const StepCard: React.FC<StepCardProps> = ({
@@ -863,18 +866,21 @@ const StepCard: React.FC<StepCardProps> = ({
     icon,
     isActive,
     isCompleted,
+    onContinue,
 }) => (
     <div
-        className={`rounded-xl transition-all duration-300 ${isActive
-            ? 'bg-white border border-gray-200 shadow-sm p-4'
-            : 'bg-white/50 border border-gray-100 p-3'
+        className={`rounded-xl transition-all duration-300 ${isCompleted
+            ? 'bg-green-50/50 border border-green-200 p-4'
+            : isActive
+                ? 'bg-white border-2 border-gray-300 shadow-sm p-4'
+                : 'bg-white/50 border border-gray-100 p-3'
             }`}
     >
         <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-3">
                 <div
                     className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-semibold ${isCompleted
-                        ? 'bg-[#E91E63] text-white'
+                        ? 'bg-green-500 text-white'
                         : isActive
                             ? 'bg-[#1E1E1E] text-white'
                             : 'bg-gray-100 text-gray-400'
@@ -883,19 +889,32 @@ const StepCard: React.FC<StepCardProps> = ({
                     {isCompleted ? '✓' : isActive ? stepNumber : <LockIcon />}
                 </div>
                 <div>
-                    <p className={`text-xs ${isActive ? 'text-gray-500' : 'text-gray-400'}`}>
+                    <p className={`text-xs ${isCompleted ? 'text-green-600' : isActive ? 'text-gray-500' : 'text-gray-400'}`}>
                         Step {stepNumber}
                     </p>
-                    <h3 className={`text-sm font-semibold ${isActive ? 'text-[#1E1E1E]' : 'text-gray-500'}`}>
+                    <h3 className={`text-sm font-semibold ${isCompleted ? 'text-green-700' : isActive ? 'text-[#1E1E1E]' : 'text-gray-500'}`}>
                         {title}
                     </h3>
-                    {!isActive && (
+                    {!isActive && !isCompleted && (
                         <p className="text-xs text-gray-400">{description}</p>
+                    )}
+                    {isCompleted && (
+                        <p className="text-xs text-green-600">Completed</p>
                     )}
                 </div>
             </div>
-            <div className={`shrink-0 ${!isActive && 'opacity-40'}`}>{icon}</div>
+            <div className={`shrink-0 ${!isActive && !isCompleted && 'opacity-40'}`}>{icon}</div>
         </div>
+        {isActive && onContinue && (
+            <div className="mt-3 ml-9">
+                <button
+                    onClick={onContinue}
+                    className="px-5 py-2 text-sm font-medium text-white bg-[#1E1E1E] rounded-lg hover:bg-[#333] transition-colors"
+                >
+                    Continue
+                </button>
+            </div>
+        )}
     </div>
 );
 
@@ -914,16 +933,38 @@ const ProgressBar: React.FC<{ current: number; total: number }> = ({ current, to
 // Main Component
 const ArtistSignupView: React.FC = () => {
     const navigate = useNavigate();
-    const { loginWithGoogle, sendPhoneOTP, verifyPhoneOTP, sendEmailOTP, verifyEmailOTP, isLoading, error, setUserType } = useAuth();
+    const { sendPhoneOTP, verifyPhoneOTP, sendEmailOTP, isLoading, error, setUserType, updateUser, user } = useAuth();
 
     // Set user type to artist on mount
     useEffect(() => {
         setUserType('artist');
     }, [setUserType]);
 
+    // Redirect completed artists to home (prevents stuck state)
+    useEffect(() => {
+        if (user && 'username' in user && (user as any).profile_completed) {
+            navigate('/artist/home', { replace: true });
+        }
+    }, [user, navigate]);
+
     // State
     const [signupMethod, setSignupMethod] = useState<SignupMethod>(null);
     const [formStep, setFormStep] = useState<FormStep>('method-select');
+
+    // Track which setup steps are completed (persisted in localStorage)
+    const [setupSteps, setSetupSteps] = useState<{ step1: boolean; step2: boolean; step3: boolean; step4: boolean }>(() => {
+        try {
+            const saved = localStorage.getItem('artist_setup_steps');
+            return saved ? JSON.parse(saved) : { step1: false, step2: false, step3: false, step4: false };
+        } catch {
+            return { step1: false, step2: false, step3: false, step4: false };
+        }
+    });
+
+    // Persist setup step state
+    useEffect(() => {
+        localStorage.setItem('artist_setup_steps', JSON.stringify(setupSteps));
+    }, [setupSteps]);
     const [subStep, setSubStep] = useState<number>(1); // 1: Basic, 2: Identity, 3: Professional, 4: Address
     const [isSaving, setIsSaving] = useState(false);
     const [showSuccess, setShowSuccess] = useState(false);
@@ -937,6 +978,210 @@ const ArtistSignupView: React.FC = () => {
     const profilePicInputRef = useRef<HTMLInputElement>(null);
     const { location: geoLocation, loading: geoLoading, error: geoError, requestLocation } = useGeolocation();
     const [locationCaptured, setLocationCaptured] = useState(false);
+
+    // Booking mode state (Step 2)
+    const [bookingMode, setBookingMode] = useState<'instant' | 'flexi' | 'both' | ''>('');
+
+    // Booking mode sub-step: 1 = mode selection, 2 = profession selection, 3 = event types & skills, 4 = service location, 5 = travel/studio details
+    const [bookingModeSubStep, setBookingModeSubStep] = useState<1 | 2 | 3 | 4 | 5>(1);
+
+    // Selected professions (multi-select)
+    const [selectedProfessions, setSelectedProfessions] = useState<string[]>([]);
+
+    // Event types & skills (Sub-step 3)
+    const [selectedEventTypes, setSelectedEventTypes] = useState<string[]>([]);
+    const [isEventDropdownOpen, setIsEventDropdownOpen] = useState(false);
+    const [skills, setSkills] = useState<string[]>([]);
+    const [skillInput, setSkillInput] = useState('');
+    const [isSkillsModalOpen, setIsSkillsModalOpen] = useState(false);
+
+    // Service location (Sub-step 4)
+    const [serviceLocation, setServiceLocation] = useState<'client' | 'studio' | 'both' | ''>('');
+
+    // Travel willingness (Sub-step 5 - when client/both)
+    const [travelWillingness, setTravelWillingness] = useState<string[]>([]);
+
+    // Studio address (Sub-step 5 - when studio/both)
+    const [studioAddress, setStudioAddress] = useState({
+        shopNo: '',
+        area: '',
+        landmark: '',
+        pincode: '',
+        city: '',
+        state: '',
+    });
+
+    // Working hours (Sub-step 5 - when studio/both)
+    const [workingHours, setWorkingHours] = useState<{ period: string; startTime: string; endTime: string }[]>([]);
+    const [isTimePickerOpen, setIsTimePickerOpen] = useState(false);
+    const [timePeriodSelection, setTimePeriodSelection] = useState('');
+    const [customStartTime, setCustomStartTime] = useState('');
+    const [customEndTime, setCustomEndTime] = useState('');
+
+    // Portfolio state (Step 3)
+    const [portfolioImages, setPortfolioImages] = useState<string[]>([]);
+    const [isUploadingPortfolio, setIsUploadingPortfolio] = useState(false);
+    const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
+    const portfolioInputRef = useRef<HTMLInputElement>(null);
+
+    // Bank Details state (Step 4)
+    const [bankDetails, setBankDetails] = useState({
+        accountHolderName: '',
+        accountNumber: '',
+        confirmAccountNumber: '',
+        bankName: '',
+        ifscCode: '',
+        upiId: '',
+    });
+
+    // Event type options
+    const eventTypeOptions = [
+        'Wedding', 'Engagement', 'Shoot', 'Parties', 'Baby shower',
+        'Haldi/Sangeet', 'Corporate events', 'Fashion shows', 'Others'
+    ];
+
+    // Skill suggestions based on profession
+    const getSkillSuggestions = (): string[] => {
+        const suggestions: string[] = [];
+        if (selectedProfessions.includes('makeup')) {
+            suggestions.push('HD Makeup', 'Airbrush Makeup', 'Party Makeup', 'Matte Finish', 'Dewy Finish', 'No-Makeup Look', 'Glam Look', 'Smokey Eyes', 'Bridal Eye Makeup', 'Cut Crease');
+        }
+        if (selectedProfessions.includes('hairstylist')) {
+            suggestions.push('Bridal Hairstyling', 'Hair Extensions', 'Blow Dry', 'Updos', 'Braids', 'Hair Coloring');
+        }
+        if (selectedProfessions.includes('nail')) {
+            suggestions.push('Gel Nails', 'Acrylic Nails', 'Nail Art', 'Manicure', 'Pedicure', 'French Tips');
+        }
+        if (selectedProfessions.includes('mehendi')) {
+            suggestions.push('Bridal Mehendi', 'Arabic Mehendi', 'Indo-Arabic', 'Rajasthani', 'Minimalist Mehendi');
+        }
+        if (selectedProfessions.includes('saree-draping')) {
+            suggestions.push('Bengali Style', 'Gujarati Style', 'Maharashtrian Style', 'South Indian Style', 'Lehenga Draping');
+        }
+        if (selectedProfessions.includes('saree-pleating')) {
+            suggestions.push('Pre-pleated Saree', 'Party Draping', 'Designer Draping', 'Seedha Pallu', 'Ulta Pallu');
+        }
+        // Filter out already added skills
+        return suggestions.filter(s => !skills.includes(s));
+    };
+
+    // Toggle event type selection
+    const toggleEventType = (eventType: string) => {
+        setSelectedEventTypes(prev =>
+            prev.includes(eventType)
+                ? prev.filter(e => e !== eventType)
+                : [...prev, eventType]
+        );
+    };
+
+    // Add a skill
+    const addSkill = (skill: string) => {
+        const trimmed = skill.trim();
+        if (trimmed && !skills.includes(trimmed)) {
+            setSkills(prev => [...prev, trimmed]);
+        }
+        setSkillInput('');
+    };
+
+    // Remove a skill
+    const removeSkill = (skill: string) => {
+        setSkills(prev => prev.filter(s => s !== skill));
+    };
+
+    // Service location options
+    const serviceLocationOptions = [
+        { id: 'client' as const, label: "Client's Location", subtitle: 'I travel to the client', image: "/info/signup/client's.png" },
+        { id: 'studio' as const, label: 'My Studio', subtitle: 'Client comes to me', image: '/info/signup/studio.png' },
+        { id: 'both' as const, label: 'Both', subtitle: '', image: '/info/signup/boths.png' },
+    ];
+
+    // Travel willingness options
+    const travelWillingnessOptions = [
+        { id: 'within-city', label: 'Within my city', image: '/info/signup/city/within my city.png' },
+        { id: 'within-region', label: 'Within my region', image: '/info/signup/city/with my region.png' },
+        { id: 'nationwide', label: 'Nationwide', image: '/info/signup/city/nationwide.png' },
+    ];
+
+    // Toggle travel willingness
+    const toggleTravelWillingness = (id: string) => {
+        setTravelWillingness(prev =>
+            prev.includes(id)
+                ? prev.filter(t => t !== id)
+                : [...prev, id]
+        );
+    };
+
+    // Update studio address field
+    const updateStudioAddress = (field: string, value: string) => {
+        setStudioAddress(prev => ({ ...prev, [field]: value }));
+    };
+
+    // Time period presets
+    const timePresets: { label: string; startTime: string; endTime: string }[] = [
+        { label: 'Morning', startTime: '9am', endTime: '12pm' },
+        { label: 'Afternoon', startTime: '1pm', endTime: '3pm' },
+        { label: 'Evening', startTime: '5pm', endTime: '9pm' },
+    ];
+
+    // Add working hour
+    const addWorkingHour = (period: string, startTime: string, endTime: string) => {
+        // Don't add duplicates
+        const exists = workingHours.some(wh => wh.period === period);
+        if (!exists) {
+            setWorkingHours(prev => [...prev, { period, startTime, endTime }]);
+        }
+    };
+
+    // Remove working hour
+    const removeWorkingHour = (period: string) => {
+        setWorkingHours(prev => prev.filter(wh => wh.period !== period));
+    };
+
+    // Handle time picker done
+    const handleTimePickerDone = () => {
+        if (timePeriodSelection === 'Any time') {
+            addWorkingHour('Any time', '12am', '12am');
+        } else if (timePeriodSelection === 'Custom' && customStartTime && customEndTime) {
+            addWorkingHour('Custom', customStartTime, customEndTime);
+        } else {
+            const preset = timePresets.find(tp => tp.label === timePeriodSelection);
+            if (preset) {
+                addWorkingHour(preset.label, preset.startTime, preset.endTime);
+            }
+        }
+        setIsTimePickerOpen(false);
+        setTimePeriodSelection('');
+        setCustomStartTime('');
+        setCustomEndTime('');
+    };
+
+    // Generate time options for custom dropdowns
+    const timeOptions = [
+        '12am', '1am', '2am', '3am', '4am', '5am', '6am', '7am', '8am', '9am', '10am', '11am',
+        '12pm', '1pm', '2pm', '3pm', '4pm', '5pm', '6pm', '7pm', '8pm', '9pm', '10pm', '11pm'
+    ];
+
+    // Profession options with images
+    const professions = [
+        { id: 'makeup', label: 'Makeup Artist', image: '/info/home/catagory section/mackup.png' },
+        { id: 'hairstylist', label: 'Hairstylist', image: '/info/home/catagory section/hairstylist.png' },
+        { id: 'nail', label: 'Nail Artist', image: '/info/home/catagory section/nail.png' },
+        { id: 'saree-draping', label: 'Saree Draping', image: '/info/home/catagory section/saree daping.png' },
+        { id: 'mehendi', label: 'Mehendi Artist', image: '/info/home/catagory section/mahendi.png' },
+        { id: 'saree-pleating', label: 'Saree Pleating', image: '/info/home/catagory section/saree plating.png' },
+    ];
+
+    // Toggle profession selection
+    const toggleProfession = (professionId: string) => {
+        setSelectedProfessions(prev =>
+            prev.includes(professionId)
+                ? prev.filter(id => id !== professionId)
+                : [...prev, professionId]
+        );
+    };
+
+    // Ref for event dropdown click-outside
+    const eventDropdownRef = React.useRef<HTMLDivElement>(null);
 
     const [formData, setFormData] = useState<FormData>({
         fullName: '',
@@ -994,6 +1239,75 @@ const ArtistSignupView: React.FC = () => {
         };
     }, [formStep]);
 
+    // Helper function to restore all state from artist profile data
+    const restoreStateFromArtist = (artist: any) => {
+        // Restore formData (profile details for preview)
+        setFormData(prev => ({
+            ...prev,
+            fullName: artist.name || prev.fullName,
+            email: artist.email || prev.email,
+            phone: artist.phone_number?.replace(/^\+91/, '') || prev.phone,
+            bio: artist.bio || prev.bio,
+            gender: artist.gender || prev.gender,
+            experience: artist.experience || prev.experience,
+            profilePicUrl: artist.profile_pic_url || prev.profilePicUrl,
+            howDidYouLearn: artist.how_did_you_learn || prev.howDidYouLearn,
+            certificateUrl: artist.certificate_url || prev.certificateUrl,
+            kycStatus: artist.kyc_verified ? 'verified' as const : prev.kycStatus,
+            address: {
+                flatNo: artist.flat_building || prev.address.flatNo,
+                street: artist.street_area || prev.address.street,
+                landmark: artist.landmark || prev.address.landmark,
+                pincode: artist.pincode || prev.address.pincode,
+                city: artist.city || prev.address.city,
+                state: artist.state || prev.address.state,
+            },
+        }));
+
+        // Restore booking mode state
+        if (artist.booking_mode && !bookingMode) setBookingMode(artist.booking_mode);
+        if (artist.profession?.length && selectedProfessions.length === 0) setSelectedProfessions(artist.profession);
+        if (artist.event_types?.length && selectedEventTypes.length === 0) setSelectedEventTypes(artist.event_types);
+        if (artist.skills?.length && skills.length === 0) setSkills(artist.skills);
+        if (artist.service_location && !serviceLocation) setServiceLocation(artist.service_location);
+        if (artist.travel_willingness?.length && travelWillingness.length === 0) setTravelWillingness(artist.travel_willingness);
+        if (artist.studio_address) {
+            try { setStudioAddress(JSON.parse(artist.studio_address)); } catch { /* ignore */ }
+        }
+        if (artist.working_hours) {
+            try { setWorkingHours(JSON.parse(artist.working_hours)); } catch { /* ignore */ }
+        }
+        // Restore portfolio
+        if (artist.portfolio?.length && portfolioImages.length === 0) {
+            setPortfolioImages(artist.portfolio);
+        }
+        // Restore bank details
+        if (artist.bank_account_name) {
+            setBankDetails(prev => ({
+                ...prev,
+                accountHolderName: artist.bank_account_name || '',
+                accountNumber: artist.bank_account_number || '',
+                confirmAccountNumber: artist.bank_account_number || '',
+                bankName: artist.bank_name || '',
+                ifscCode: artist.bank_ifsc || '',
+                upiId: artist.upi_id || '',
+            }));
+        }
+    };
+
+    // Fetch artist profile from backend as fallback
+    const fetchAndRestoreProfile = async () => {
+        try {
+            const artist = await authService.getCurrentArtist();
+            localStorage.setItem('user', JSON.stringify(artist));
+            restoreStateFromArtist(artist);
+            console.log('Fetched and restored artist profile from backend');
+        } catch (error: any) {
+            console.error('Failed to fetch artist profile:', error);
+            toast.error('Failed to load profile data. Please refresh the page.');
+        }
+    };
+
     // Load saved progress from localStorage on mount
     useEffect(() => {
         const saved = localStorage.getItem('artist_signup_data');
@@ -1010,6 +1324,34 @@ const ArtistSignupView: React.FC = () => {
             } catch (e) {
                 console.error('Failed to parse saved progress:', e);
             }
+        }
+
+        // ALWAYS restore from saved artist profile (backend source of truth)
+        // This ensures preview data (name, pic, bio, skills, etc.) persists across all steps
+        const savedUser = localStorage.getItem('user');
+        const firebaseToken = localStorage.getItem('firebaseToken');
+
+        if (savedUser) {
+            try {
+                const artist = JSON.parse(savedUser);
+                restoreStateFromArtist(artist);
+                console.log('Restored artist profile data from localStorage');
+            } catch (error) {
+                console.error('Failed to parse localStorage user, fetching from backend:', error);
+                // localStorage corrupted, fetch from backend (only if authenticated)
+                if (firebaseToken) {
+                    fetchAndRestoreProfile();
+                } else {
+                    console.log('User not authenticated, skipping backend fetch');
+                }
+            }
+        } else if (firebaseToken) {
+            // No localStorage but user is authenticated → fetch from backend
+            console.log('No localStorage user found but authenticated, fetching from backend');
+            fetchAndRestoreProfile();
+        } else {
+            // New user, not authenticated yet → skip fetch (normal signup flow)
+            console.log('New user signup flow, no profile to restore');
         }
     }, []);
 
@@ -1037,6 +1379,54 @@ const ArtistSignupView: React.FC = () => {
             }
         }
     }, [subStep]);
+
+    // Reverse geocode: auto-fill address fields when location is captured
+    useEffect(() => {
+        if (!geoLocation) return;
+
+        // Store lat/lng in form data
+        setFormData(prev => ({
+            ...prev,
+            address: {
+                ...prev.address,
+                location: { lat: geoLocation.latitude, lng: geoLocation.longitude },
+            },
+        }));
+
+        // Reverse geocode via backend proxy (calls Nominatim server-side, no CORS issues)
+        const reverseGeocode = async () => {
+            try {
+                const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+                const res = await fetch(
+                    `${baseUrl}/geocode/reverse?lat=${geoLocation.latitude}&lon=${geoLocation.longitude}`
+                );
+                if (!res.ok) return;
+                const data = await res.json();
+                const addr = data.address || {};
+
+                setFormData(prev => ({
+                    ...prev,
+                    address: {
+                        flatNo: prev.address.flatNo || '',
+                        street: addr.road || addr.neighbourhood || addr.suburb || prev.address.street || '',
+                        landmark: addr.neighbourhood || addr.suburb || prev.address.landmark || '',
+                        pincode: addr.postcode || prev.address.pincode || '',
+                        city: addr.city || addr.town || addr.village || addr.county || prev.address.city || '',
+                        state: addr.state || prev.address.state || '',
+                        location: { lat: geoLocation.latitude, lng: geoLocation.longitude },
+                    },
+                }));
+                setLocationCaptured(true);
+                toast.success('Address auto-filled from your location!');
+            } catch (err) {
+                console.error('Reverse geocoding failed:', err);
+                // Still mark location as captured even if geocoding fails
+                setLocationCaptured(true);
+            }
+        };
+
+        reverseGeocode();
+    }, [geoLocation]);
 
     const updateFormData = (updates: Partial<FormData>) => {
         setFormData(prev => ({ ...prev, ...updates }));
@@ -1185,13 +1575,95 @@ const ArtistSignupView: React.FC = () => {
     const handleGoogleSignup = async () => {
         setSignupMethod('google');
         try {
-            await loginWithGoogle();
-            // After successful Google auth, go to details form
-            // Email would be auto-filled from Google account
+            const provider = new GoogleAuthProvider();
+            provider.addScope('profile');
+            provider.addScope('email');
+
+            const result = await signInWithPopup(firebaseAuth, provider);
+            const user = result.user;
+            const token = await user.getIdToken();
+
+            // Store Firebase token for later backend call on final submit
+            localStorage.setItem('firebaseToken', token);
+
+            // Auto-fill name and email from Google account
+            setFormData(prev => ({
+                ...prev,
+                fullName: user.displayName || prev.fullName,
+                email: user.email || prev.email,
+                profilePicUrl: user.photoURL || prev.profilePicUrl,
+            }));
+
+            // Mark email as verified (Google already verified it)
             setEmailVerified(true);
+
+            // Go to registration form - DON'T call backend yet
             setFormStep('details-form');
-        } catch {
-            // Error handled by AuthContext
+
+            toast.success('Google account connected! Please complete your profile.');
+        } catch (err: any) {
+            if (err.code === 'auth/popup-closed-by-user') {
+                toast.error('Sign-in cancelled');
+            } else if (err.code === 'auth/popup-blocked') {
+                toast.error('Popup blocked. Please allow popups for this site.');
+            } else {
+                toast.error(err.message || 'Failed to sign in with Google');
+            }
+        }
+    };
+
+    // File upload handlers (Direct Firebase Storage Upload)
+    const handleProfilePicUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+
+        setIsUploadingImage(true);
+        setOtpError('');
+
+        try {
+            const url = await uploadProfilePicture(file, {
+                onProgress: (progress) => console.log(`Upload: ${Math.round(progress)}%`),
+                onError: (error) => {
+                    setOtpError(error);
+                    toast.error(error);
+                },
+                onSuccess: () => toast.success('Profile picture uploaded!')
+            });
+
+            setFormData(prev => ({ ...prev, profilePicUrl: url }));
+        } catch (error: any) {
+            const friendlyError = getErrorMessage(error);
+            setOtpError(friendlyError);
+            toast.error(friendlyError);
+        } finally {
+            setIsUploadingImage(false);
+        }
+    };
+
+    const handleCertificateUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+
+        setIsUploadingImage(true);
+        setOtpError('');
+
+        try {
+            const url = await uploadCertificate(file, {
+                onProgress: (progress) => console.log(`Upload: ${Math.round(progress)}%`),
+                onError: (error) => {
+                    setOtpError(error);
+                    toast.error(error);
+                },
+                onSuccess: () => toast.success('Certificate uploaded!')
+            });
+
+            setFormData(prev => ({ ...prev, certificateUrl: url }));
+        } catch (error: any) {
+            const friendlyError = getErrorMessage(error);
+            setOtpError(friendlyError);
+            toast.error(friendlyError);
+        } finally {
+            setIsUploadingImage(false);
         }
     };
 
@@ -1351,22 +1823,37 @@ const ArtistSignupView: React.FC = () => {
                     longitude: formData.address.location?.lng,
                 };
 
-                // Call profile completion endpoint
-                const updatedArtist = await authService.completeArtistProfile(profileData);
+                // For Google OAuth signup: first register the artist in backend
+                if (signupMethod === 'google') {
+                    const firebaseToken = localStorage.getItem('firebaseToken');
+                    if (!firebaseToken) {
+                        throw new Error('Session expired. Please sign up again.');
+                    }
+                    // Create artist in backend with mode=signup
+                    await authService.authenticateWithOAuth(firebaseToken, 'artist', 'signup');
+                }
+
+                // Call profile completion endpoint (don't mark complete — only Step 1)
+                const updatedArtist = await authService.completeArtistProfile({
+                    ...profileData,
+                    mark_complete: false,
+                });
 
                 // Update user in localStorage
                 localStorage.setItem('user', JSON.stringify(updatedArtist));
 
-                // Clear saved signup progress
+                // Mark Step 1 as completed
+                setSetupSteps(prev => {
+                    const next = { ...prev, step1: true };
+                    localStorage.setItem('artist_setup_steps', JSON.stringify(next));
+                    return next;
+                });
+
+                // Clear saved signup progress (form data for step 1)
                 localStorage.removeItem('artist_signup_data');
 
-                toast.success('Profile completed successfully!');
+                toast.success('Personal details saved!');
                 setShowSuccess(true);
-
-                // Navigate to home after success animation
-                setTimeout(() => {
-                    navigate('/artist/home');
-                }, 2000);
             }
         } catch (error: any) {
             console.error('Error saving progress:', error);
@@ -1406,44 +1893,6 @@ const ArtistSignupView: React.FC = () => {
         localStorage.removeItem('artist_signup_data');
     };
 
-    // Handle profile picture upload to Firebase Storage
-    const handleProfilePicUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-        const file = event.target.files?.[0];
-        if (!file) return;
-
-        // Validate file type
-        if (!file.type.startsWith('image/')) {
-            console.error('Please select an image file');
-            return;
-        }
-
-        // Validate file size (max 1MB)
-        if (file.size > 1024 * 1024) {
-            console.error('Image size should be under 1MB');
-            return;
-        }
-
-        setIsUploadingImage(true);
-        try {
-            // Create a unique file name
-            const fileName = `profile-pics/${Date.now()}_${file.name}`;
-            const storageRef = ref(storage, fileName);
-
-            // Upload the file
-            await uploadBytes(storageRef, file);
-
-            // Get the download URL
-            const downloadUrl = await getDownloadURL(storageRef);
-
-            // Update form data with the URL
-            updateFormData({ profilePicUrl: downloadUrl });
-            console.log('Profile picture uploaded successfully:', downloadUrl);
-        } catch (error) {
-            console.error('Error uploading profile picture:', error);
-        } finally {
-            setIsUploadingImage(false);
-        }
-    };
 
     // Handle profile picture removal
     const handleRemoveProfilePic = () => {
@@ -1453,7 +1902,1359 @@ const ArtistSignupView: React.FC = () => {
         }
     };
 
-    // Render method selection (initial view)
+    // Determine the next active step
+    const getActiveStep = (): number => {
+        if (!setupSteps.step1) return 1;
+        if (!setupSteps.step2) return 2;
+        if (!setupSteps.step3) return 3;
+        if (!setupSteps.step4) return 4;
+        return 0; // All done
+    };
+
+    const activeStep = getActiveStep();
+
+    // Handle "Continue" on step cards
+    const handleStepContinue = (step: number) => {
+        if (step === 2) {
+            setFormStep('booking-modes');
+        } else if (step === 3) {
+            setFormStep('portfolio');
+        } else if (step === 4) {
+            setFormStep('bank-details');
+        }
+    };
+
+    // Handle booking mode step navigation
+    const handleBookingModeNext = () => {
+        if (bookingModeSubStep === 1) {
+            if (!bookingMode) {
+                toast.error('Please select a booking mode');
+                return;
+            }
+            setBookingModeSubStep(2);
+        } else if (bookingModeSubStep === 2) {
+            if (selectedProfessions.length === 0) {
+                toast.error('Please select at least one specialization');
+                return;
+            }
+            setBookingModeSubStep(3);
+        } else if (bookingModeSubStep === 3) {
+            if (selectedEventTypes.length === 0) {
+                toast.error('Please select at least one event type');
+                return;
+            }
+            if (skills.length === 0) {
+                toast.error('Please add at least one skill');
+                return;
+            }
+            setBookingModeSubStep(4);
+        } else if (bookingModeSubStep === 4) {
+            if (!serviceLocation) {
+                toast.error('Please select where you provide services');
+                return;
+            }
+            setBookingModeSubStep(5);
+        } else if (bookingModeSubStep === 5) {
+            // Validate based on service location
+            if (serviceLocation === 'client' || serviceLocation === 'both') {
+                if (travelWillingness.length === 0) {
+                    toast.error('Please select your travel willingness');
+                    return;
+                }
+            }
+            if (serviceLocation === 'studio' || serviceLocation === 'both') {
+                if (!studioAddress.area || !studioAddress.pincode || !studioAddress.city || !studioAddress.state) {
+                    toast.error('Please fill in the required studio address fields');
+                    return;
+                }
+            }
+            handleBookingModeSave();
+        }
+    };
+
+    const handleBookingModeSave = async () => {
+        try {
+            // Build payload for backend
+            const bookingData: Parameters<typeof authService.completeArtistProfile>[0] = {
+                booking_mode: bookingMode,
+                profession: selectedProfessions,
+                skills: skills,
+                event_types: selectedEventTypes,
+                service_location: serviceLocation,
+                travel_willingness: travelWillingness,
+                studio_address: (serviceLocation === 'studio' || serviceLocation === 'both')
+                    ? JSON.stringify(studioAddress) : undefined,
+                working_hours: workingHours.length > 0
+                    ? JSON.stringify(workingHours) : undefined,
+                mark_complete: false,
+            };
+
+            // Sync to backend
+            const updatedArtist = await authService.completeArtistProfile(bookingData);
+            localStorage.setItem('user', JSON.stringify(updatedArtist));
+
+            // Also keep localStorage copies for quick restore
+            localStorage.setItem('artist_booking_mode', bookingMode);
+            localStorage.setItem('artist_professions', JSON.stringify(selectedProfessions));
+            localStorage.setItem('artist_event_types', JSON.stringify(selectedEventTypes));
+            localStorage.setItem('artist_skills', JSON.stringify(skills));
+            localStorage.setItem('artist_service_location', serviceLocation);
+            localStorage.setItem('artist_travel_willingness', JSON.stringify(travelWillingness));
+            localStorage.setItem('artist_studio_address', JSON.stringify(studioAddress));
+            localStorage.setItem('artist_working_hours', JSON.stringify(workingHours));
+
+            // Mark Step 2 as completed
+            setSetupSteps(prev => {
+                const next = { ...prev, step2: true };
+                localStorage.setItem('artist_setup_steps', JSON.stringify(next));
+                return next;
+            });
+
+            toast.success('Booking mode saved!');
+            setShowSuccess(true);
+        } catch (error: any) {
+            console.error('Error saving booking mode:', error);
+            toast.error(error.message || 'Failed to save booking mode. Please try again.');
+        }
+    };
+
+    const handleBookingModeBack = () => {
+        if (bookingModeSubStep === 5) {
+            setBookingModeSubStep(4);
+        } else if (bookingModeSubStep === 4) {
+            setBookingModeSubStep(3);
+        } else if (bookingModeSubStep === 3) {
+            setBookingModeSubStep(2);
+        } else if (bookingModeSubStep === 2) {
+            setBookingModeSubStep(1);
+        } else {
+            setFormStep('method-select');
+        }
+    };
+
+    // ========================
+    // PORTFOLIO HANDLERS (Step 3)
+    // ========================
+
+    const handlePortfolioUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const files = e.target.files;
+        if (!files || files.length === 0) return;
+
+        const remaining = 10 - portfolioImages.length;
+        if (remaining <= 0) {
+            toast.error('Maximum 10 photos allowed');
+            return;
+        }
+
+        const filesToUpload = Array.from(files).slice(0, remaining);
+        setIsUploadingPortfolio(true);
+
+        try {
+            const uploadPromises = filesToUpload.map(file =>
+                uploadPortfolioImage(file)
+            );
+            const urls = await Promise.all(uploadPromises);
+            setPortfolioImages(prev => [...prev, ...urls]);
+            toast.success(`${urls.length} photo${urls.length > 1 ? 's' : ''} uploaded!`);
+        } catch (error: any) {
+            console.error('Portfolio upload error:', error);
+            toast.error('Failed to upload some photos. Please try again.');
+        } finally {
+            setIsUploadingPortfolio(false);
+            // Reset the input
+            if (portfolioInputRef.current) {
+                portfolioInputRef.current.value = '';
+            }
+        }
+    };
+
+    const handlePortfolioDelete = (index: number) => {
+        setPortfolioImages(prev => prev.filter((_, i) => i !== index));
+    };
+
+    const handlePortfolioDragStart = (index: number) => {
+        setDraggedIndex(index);
+    };
+
+    const handlePortfolioDragOver = (e: React.DragEvent, index: number) => {
+        e.preventDefault();
+        if (draggedIndex === null || draggedIndex === index) return;
+
+        setPortfolioImages(prev => {
+            const newImages = [...prev];
+            const draggedImage = newImages[draggedIndex];
+            newImages.splice(draggedIndex, 1);
+            newImages.splice(index, 0, draggedImage);
+            return newImages;
+        });
+        setDraggedIndex(index);
+    };
+
+    const handlePortfolioDragEnd = () => {
+        setDraggedIndex(null);
+    };
+
+    const handlePortfolioSave = async () => {
+        if (portfolioImages.length === 0) {
+            toast.error('Please upload at least one photo');
+            return;
+        }
+
+        try {
+            const updatedArtist = await authService.completeArtistProfile({
+                portfolio: portfolioImages,
+                mark_complete: false,
+            });
+            localStorage.setItem('user', JSON.stringify(updatedArtist));
+
+            setSetupSteps(prev => {
+                const next = { ...prev, step3: true };
+                localStorage.setItem('artist_setup_steps', JSON.stringify(next));
+                return next;
+            });
+
+            toast.success('Portfolio saved!');
+            setShowSuccess(true);
+        } catch (error: any) {
+            console.error('Error saving portfolio:', error);
+            toast.error(error.message || 'Failed to save portfolio. Please try again.');
+        }
+    };
+
+    // ========================
+    // BANK DETAILS HANDLERS (Step 4)
+    // ========================
+
+    const handleBankFieldChange = (field: keyof typeof bankDetails, value: string) => {
+        setBankDetails(prev => ({ ...prev, [field]: value }));
+    };
+
+    const handleBankClear = () => {
+        setBankDetails({
+            accountHolderName: '',
+            accountNumber: '',
+            confirmAccountNumber: '',
+            bankName: '',
+            ifscCode: '',
+            upiId: '',
+        });
+    };
+
+    const bankAccountMatch = bankDetails.accountNumber.length > 0 &&
+        bankDetails.confirmAccountNumber.length > 0 &&
+        bankDetails.accountNumber === bankDetails.confirmAccountNumber;
+
+    const upiValid = bankDetails.upiId.length > 0 && /^[\w.-]+@[\w]+$/.test(bankDetails.upiId);
+
+    const bankFilledCount = [
+        bankDetails.accountHolderName,
+        bankDetails.accountNumber,
+        bankDetails.confirmAccountNumber,
+        bankDetails.bankName,
+        bankDetails.ifscCode,
+    ].filter(v => v.length > 0).length;
+
+    const bankProgress = bankFilledCount / 5;
+
+    const canSubmitBank = bankDetails.accountHolderName.length > 0 &&
+        bankAccountMatch &&
+        bankDetails.bankName.length > 0 &&
+        bankDetails.ifscCode.length > 0;
+
+    const handleBankSave = async () => {
+        if (!canSubmitBank && !upiValid) {
+            toast.error('Please fill in all required fields or provide a valid UPI ID');
+            return;
+        }
+
+        try {
+            const updatedArtist = await authService.completeArtistProfile({
+                bank_account_name: bankDetails.accountHolderName || undefined,
+                bank_account_number: bankDetails.accountNumber || undefined,
+                bank_name: bankDetails.bankName || undefined,
+                bank_ifsc: bankDetails.ifscCode || undefined,
+                upi_id: bankDetails.upiId || undefined,
+                mark_complete: true,  // Mark profile as complete (all 4 steps done)
+            });
+            // Update both localStorage AND AuthContext in-memory state
+            // so ProfileCompletionGuard sees profile_completed: true
+            updateUser(updatedArtist);
+
+            setSetupSteps(prev => {
+                const next = { ...prev, step4: true };
+                localStorage.setItem('artist_setup_steps', JSON.stringify(next));
+                return next;
+            });
+
+            toast.success('Profile completed!');
+            setShowSuccess(true);
+
+            // Redirect to artist home after success animation
+            setTimeout(() => {
+                navigate('/artist/home');
+            }, 2000);
+        } catch (error: any) {
+            console.error('Error saving bank details:', error);
+            toast.error(error.message || 'Failed to save bank details. Please try again.');
+        }
+    };
+
+    // ========================
+    // RENDER: Portfolio Form (Step 3)
+    // ========================
+
+    const renderPortfolioForm = () => (
+        <div className="h-screen bg-white flex overflow-hidden">
+            {/* Left side - Form (70%) */}
+            <div className="w-[70%] pl-14 py-6 flex flex-col h-full">
+                <div className="w-[90%] flex flex-col h-full">
+                    {/* Header */}
+                    <div className="flex items-center justify-between mb-6 shrink-0">
+                        <div className="flex items-center gap-4">
+                            <button onClick={() => setFormStep('method-select')} className="w-10 h-10 rounded-full border border-gray-300 flex items-center justify-center bg-white hover:bg-gray-50">
+                                <BackArrowIcon />
+                            </button>
+                            <h1 className="text-xl font-semibold">Portfolio</h1>
+                        </div>
+                        <div className="flex items-center gap-3">
+                            {portfolioImages.length > 1 && (
+                                <button
+                                    onClick={() => toast.info('Drag photos to reorder them')}
+                                    className="px-5 py-2.5 text-sm font-medium text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+                                >
+                                    Reorder
+                                </button>
+                            )}
+                            <button
+                                onClick={handlePortfolioSave}
+                                disabled={portfolioImages.length === 0}
+                                className={`px-5 py-2.5 text-sm font-medium text-white rounded-lg transition-colors ${portfolioImages.length > 0
+                                    ? 'bg-gray-900 hover:bg-gray-800'
+                                    : 'bg-gray-400 cursor-not-allowed'
+                                    }`}
+                            >
+                                Submit
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Upload area */}
+                    <div className="flex-1 overflow-y-auto pr-4">
+                        <input
+                            ref={portfolioInputRef}
+                            type="file"
+                            multiple
+                            accept="image/jpeg,image/png,image/jpg"
+                            onChange={handlePortfolioUpload}
+                            className="hidden"
+                        />
+
+                        {portfolioImages.length === 0 && !isUploadingPortfolio ? (
+                            /* Empty state */
+                            <div
+                                onClick={() => portfolioInputRef.current?.click()}
+                                className="flex flex-col items-center justify-center py-32 cursor-pointer hover:bg-gray-50 rounded-2xl transition-colors"
+                            >
+                                <div className="w-20 h-20 rounded-2xl bg-gray-100 flex items-center justify-center mb-6">
+                                    <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-gray-400">
+                                        <rect x="3" y="3" width="7" height="7" rx="1" />
+                                        <rect x="14" y="3" width="7" height="7" rx="1" />
+                                        <rect x="3" y="14" width="7" height="7" rx="1" />
+                                        <rect x="14" y="14" width="7" height="7" rx="1" />
+                                    </svg>
+                                </div>
+                                <h3 className="text-lg font-semibold text-gray-900 mb-1">Upload up to 10 photos</h3>
+                                <p className="text-sm text-gray-500">Minimum recommended is 5. JPEG, PNG, PDF up to 2 MB.</p>
+                            </div>
+                        ) : (
+                            /* Photo grid */
+                            <div>
+                                <div className="grid grid-cols-3 gap-3 mb-4">
+                                    {portfolioImages.map((url, index) => (
+                                        <div
+                                            key={index}
+                                            draggable
+                                            onDragStart={() => handlePortfolioDragStart(index)}
+                                            onDragOver={(e) => handlePortfolioDragOver(e, index)}
+                                            onDragEnd={handlePortfolioDragEnd}
+                                            className={`relative group aspect-4/5 rounded-xl overflow-hidden cursor-grab active:cursor-grabbing border-2 transition-all ${draggedIndex === index ? 'border-pink-400 opacity-60 scale-95' : 'border-transparent'
+                                                }`}
+                                        >
+                                            <img
+                                                src={url}
+                                                alt={`Portfolio ${index + 1}`}
+                                                className="w-full h-full object-cover"
+                                            />
+                                            {/* Delete overlay */}
+                                            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center">
+                                                <button
+                                                    onClick={(e) => { e.stopPropagation(); handlePortfolioDelete(index); }}
+                                                    className="opacity-0 group-hover:opacity-100 transition-opacity w-8 h-8 bg-white/90 rounded-full flex items-center justify-center shadow-lg"
+                                                >
+                                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-red-500">
+                                                        <path d="M18 6L6 18M6 6l12 12" />
+                                                    </svg>
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ))}
+
+                                    {/* Add more button */}
+                                    {portfolioImages.length < 10 && (
+                                        <div
+                                            onClick={() => portfolioInputRef.current?.click()}
+                                            className="aspect-4/5 rounded-xl border-2 border-dashed border-gray-300 flex flex-col items-center justify-center cursor-pointer hover:border-gray-400 hover:bg-gray-50 transition-colors"
+                                        >
+                                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-gray-400 mb-1">
+                                                <path d="M12 5v14M5 12h14" />
+                                            </svg>
+                                            <span className="text-xs text-gray-500">Add more</span>
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* Upload progress */}
+                                {isUploadingPortfolio && (
+                                    <div className="flex items-center gap-3 py-3 px-4 bg-pink-50 rounded-xl">
+                                        <div className="w-5 h-5 border-2 border-pink-400 border-t-transparent rounded-full animate-spin" />
+                                        <span className="text-sm text-pink-700">Uploading photos...</span>
+                                    </div>
+                                )}
+
+                                <p className="text-xs text-gray-400 mt-2">
+                                    {portfolioImages.length}/10 photos • Drag to reorder
+                                </p>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            </div>
+
+            {/* Right side - Profile Preview (30%) */}
+            <div className="w-[30%] border-l border-gray-200 hidden lg:block">
+                <div className="h-10 bg-linear-to-b from-pink-100 to-white"></div>
+                <div className="p-6">
+                    <ArtistProfilePreview
+                        name={formData.fullName}
+                        profilePicUrl={formData.profilePicUrl}
+                        profession={selectedProfessions.map(id => professions.find(p => p.id === id)?.label || '').filter(Boolean)}
+                        bio={formData.bio}
+                        kycVerified={formData.kycStatus === 'verified'}
+                        certificateUrl={formData.certificateUrl}
+                        city={formData.address.city}
+                        state={formData.address.state}
+                        street={formData.address.street}
+                        skills={skills}
+                    />
+                </div>
+            </div>
+        </div>
+    );
+
+    // ========================
+    // RENDER: Bank Details Form (Step 4)
+    // ========================
+
+    const renderBankDetailsForm = () => (
+        <div className="h-screen bg-white flex overflow-hidden">
+            {/* Left side - Form (70%) */}
+            <div className="w-[70%] pl-14 py-6 flex flex-col h-full">
+                <div className="w-[90%] flex flex-col h-full">
+                    {/* Header */}
+                    <div className="flex items-center justify-between mb-2 shrink-0">
+                        <div className="flex items-center gap-4">
+                            <button onClick={() => setFormStep('method-select')} className="w-10 h-10 rounded-full border border-gray-300 flex items-center justify-center bg-white hover:bg-gray-50">
+                                <BackArrowIcon />
+                            </button>
+                            <h1 className="text-xl font-semibold">Bank details</h1>
+                        </div>
+                        <div className="flex items-center gap-3">
+                            <button
+                                onClick={handleBankClear}
+                                className="px-5 py-2.5 text-sm font-medium text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+                            >
+                                Clear
+                            </button>
+                            <button
+                                onClick={handleBankSave}
+                                disabled={!canSubmitBank && !upiValid}
+                                className={`px-5 py-2.5 text-sm font-medium text-white rounded-lg transition-colors ${(canSubmitBank || upiValid)
+                                    ? 'bg-gray-900 hover:bg-gray-800'
+                                    : 'bg-gray-400 cursor-not-allowed'
+                                    }`}
+                            >
+                                Submit
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Progress bar */}
+                    <div className="w-[60%] h-2 bg-gray-200 rounded-full mb-8 overflow-hidden">
+                        <div
+                            className="h-full bg-linear-to-r from-pink-300 to-pink-500 rounded-full transition-all duration-500"
+                            style={{ width: `${bankProgress * 100}%` }}
+                        />
+                    </div>
+
+                    {/* Form */}
+                    <div className="flex-1 overflow-y-auto pr-4">
+                        <h2 className="text-xl font-bold text-gray-900 mb-6">Add your bank details</h2>
+
+                        <div className="space-y-5 max-w-md">
+                            {/* Account holder name */}
+                            <div>
+                                <label className="block text-xs font-medium text-gray-500 mb-1.5">Account holder name</label>
+                                <input
+                                    type="text"
+                                    value={bankDetails.accountHolderName}
+                                    onChange={(e) => handleBankFieldChange('accountHolderName', e.target.value)}
+                                    placeholder="Eg. Naveen Kumar"
+                                    className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm text-gray-900 bg-white focus:outline-none focus:border-gray-500 transition-colors placeholder:text-gray-400"
+                                />
+                                <p className="text-[11px] text-gray-400 mt-1">Add your name as per in the bank account</p>
+                            </div>
+
+                            {/* Account number */}
+                            <div>
+                                <label className="block text-xs font-medium text-gray-500 mb-1.5">Account number / IBAN</label>
+                                <input
+                                    type="text"
+                                    value={bankDetails.accountNumber}
+                                    onChange={(e) => handleBankFieldChange('accountNumber', e.target.value.replace(/\D/g, ''))}
+                                    placeholder="Eg. 50100466215966"
+                                    className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm text-gray-900 bg-white focus:outline-none focus:border-gray-500 transition-colors placeholder:text-gray-400"
+                                />
+                            </div>
+
+                            {/* Confirm account number */}
+                            <div>
+                                <label className="block text-xs font-medium text-gray-500 mb-1.5">Re-enter your Account number / IBAN</label>
+                                <div className="relative">
+                                    <input
+                                        type="text"
+                                        value={bankDetails.confirmAccountNumber}
+                                        onChange={(e) => handleBankFieldChange('confirmAccountNumber', e.target.value.replace(/\D/g, ''))}
+                                        placeholder="Eg. 50100466215966"
+                                        className={`w-full px-4 py-3 border rounded-xl text-sm text-gray-900 bg-white focus:outline-none transition-colors placeholder:text-gray-400 ${bankAccountMatch ? 'border-green-400' : 'border-gray-300 focus:border-gray-500'
+                                            }`}
+                                    />
+                                    {bankAccountMatch && (
+                                        <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" className="text-green-500">
+                                                <circle cx="12" cy="12" r="10" fill="currentColor" />
+                                                <path d="M8 12l2.5 2.5L16 9" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                                            </svg>
+                                            <span className="text-xs font-medium text-green-600">Verified</span>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* Bank Name */}
+                            <div>
+                                <label className="block text-xs font-medium text-gray-500 mb-1.5">Bank Name</label>
+                                <input
+                                    type="text"
+                                    value={bankDetails.bankName}
+                                    onChange={(e) => handleBankFieldChange('bankName', e.target.value)}
+                                    placeholder="Eg. HDFC"
+                                    className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm text-gray-900 bg-white focus:outline-none focus:border-gray-500 transition-colors placeholder:text-gray-400"
+                                />
+                            </div>
+
+                            {/* IFSC Code */}
+                            <div>
+                                <label className="block text-xs font-medium text-gray-500 mb-1.5">IFSC Code</label>
+                                <input
+                                    type="text"
+                                    value={bankDetails.ifscCode}
+                                    onChange={(e) => handleBankFieldChange('ifscCode', e.target.value.toUpperCase())}
+                                    placeholder="Eg. HDFC0002034"
+                                    className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm text-gray-900 bg-white focus:outline-none focus:border-gray-500 transition-colors placeholder:text-gray-400"
+                                />
+                            </div>
+
+                            {/* Divider */}
+                            <div className="flex items-center gap-4 py-2">
+                                <div className="flex-1 h-px bg-gray-200" />
+                                <span className="text-xs text-gray-400 font-medium">Or</span>
+                                <div className="flex-1 h-px bg-gray-200" />
+                            </div>
+
+                            {/* UPI ID */}
+                            <div>
+                                <label className="block text-xs font-medium text-gray-500 mb-1.5">UPI ID</label>
+                                <div className="relative">
+                                    <input
+                                        type="text"
+                                        value={bankDetails.upiId}
+                                        onChange={(e) => handleBankFieldChange('upiId', e.target.value)}
+                                        placeholder="Eg. admin-1@okhdfcbank"
+                                        className={`w-full px-4 py-3 border rounded-xl text-sm text-gray-900 bg-white focus:outline-none transition-colors placeholder:text-gray-400 ${upiValid ? 'border-green-400' : 'border-gray-300 focus:border-gray-500'
+                                            }`}
+                                    />
+                                    {upiValid && (
+                                        <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" className="text-green-500">
+                                                <circle cx="12" cy="12" r="10" fill="currentColor" />
+                                                <path d="M8 12l2.5 2.5L16 9" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                                            </svg>
+                                            <span className="text-xs font-medium text-green-600">Verified</span>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {/* Right side - Profile Preview (30%) */}
+            <div className="w-[30%] border-l border-gray-200 hidden lg:block">
+                <div className="h-10 bg-linear-to-b from-pink-100 to-white"></div>
+                <div className="p-6">
+                    <ArtistProfilePreview
+                        name={formData.fullName}
+                        profilePicUrl={formData.profilePicUrl}
+                        profession={selectedProfessions.map(id => professions.find(p => p.id === id)?.label || '').filter(Boolean)}
+                        bio={formData.bio}
+                        kycVerified={formData.kycStatus === 'verified'}
+                        certificateUrl={formData.certificateUrl}
+                        city={formData.address.city}
+                        state={formData.address.state}
+                        street={formData.address.street}
+                        skills={skills}
+                        portfolioImages={portfolioImages}
+                    />
+                </div>
+            </div>
+        </div>
+    );
+
+    // Render booking modes form (Step 2)
+    const renderBookingModesForm = () => (
+        <div className="h-screen bg-white flex overflow-hidden">
+            {/* Left side - Form (70%) */}
+            <div className="w-[70%] pl-14 py-6 flex flex-col h-full">
+                <div className="w-[90%] flex flex-col h-full">
+                    {/* Header */}
+                    <div className="flex items-center justify-between mb-4 shrink-0">
+                        <div className="flex items-center gap-4">
+                            <button onClick={handleBookingModeBack} className="w-10 h-10 rounded-full border border-gray-300 flex items-center justify-center bg-white hover:bg-gray-50">
+                                <BackArrowIcon />
+                            </button>
+                            <h1 className="text-xl font-semibold">Booking modes</h1>
+                        </div>
+                        <div className="flex items-center gap-3">
+                            {bookingModeSubStep === 5 && (
+                                <button
+                                    onClick={() => {
+                                        setFormStep('method-select');
+                                    }}
+                                    className="px-5 py-2.5 text-sm font-medium text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+                                >
+                                    Clear
+                                </button>
+                            )}
+                            <button
+                                onClick={handleBookingModeNext}
+                                disabled={
+                                    (bookingModeSubStep === 1 && !bookingMode) ||
+                                    (bookingModeSubStep === 2 && selectedProfessions.length === 0) ||
+                                    (bookingModeSubStep === 3 && (selectedEventTypes.length === 0 || skills.length === 0)) ||
+                                    (bookingModeSubStep === 4 && !serviceLocation)
+                                }
+                                className={`px-5 py-2.5 text-sm font-medium text-white rounded-lg transition-colors ${((bookingModeSubStep === 1 && bookingMode) ||
+                                    (bookingModeSubStep === 2 && selectedProfessions.length > 0) ||
+                                    (bookingModeSubStep === 3 && selectedEventTypes.length > 0 && skills.length > 0) ||
+                                    (bookingModeSubStep === 4 && serviceLocation) ||
+                                    bookingModeSubStep === 5)
+                                    ? 'bg-gray-700 hover:bg-gray-800'
+                                    : 'bg-gray-400 cursor-not-allowed'
+                                    }`}
+                            >
+                                {bookingModeSubStep === 5 ? 'Submit' : bookingModeSubStep === 4 ? 'Save & continue' : 'Next'}
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Progress bar */}
+                    <div className="mb-6 shrink-0">
+                        <div className="h-1 bg-gray-100 rounded-full overflow-hidden">
+                            <div
+                                className="h-full bg-pink-500 rounded-full transition-all duration-300"
+                                style={{ width: `${bookingModeSubStep * 20}%` }}
+                            />
+                        </div>
+                        <div className="flex items-center gap-2 mt-2 text-xs text-gray-500">
+                            <span>Booking modes</span>
+                        </div>
+                    </div>
+
+                    {/* Scrollable content */}
+                    <div className="flex-1 overflow-y-auto pr-4" data-lenis-prevent>
+                        {bookingModeSubStep === 1 ? (
+                            <>
+                                <h2 className="text-2xl font-semibold mb-6">Choose your booking mode</h2>
+
+                                {/* Booking mode options - Bento Grid */}
+                                <div className="flex flex-wrap gap-6 px-4 mb-4">
+                                    {/* Instant Booking */}
+                                    <button
+                                        onClick={() => setBookingMode('instant')}
+                                        className={`relative rounded-2xl border-2 p-5 text-left transition-all w-[220px] h-[220px] flex flex-col justify-between overflow-hidden group ${bookingMode === 'instant'
+                                            ? 'border-gray-900 bg-gray-50'
+                                            : 'border-gray-200 hover:border-gray-300'
+                                            }`}
+                                    >
+                                        <div className="flex justify-between items-start w-full z-10">
+                                            <h3 className="font-semibold text-lg text-gray-900 leading-tight">Instant Booking</h3>
+                                            <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 ${bookingMode === 'instant' ? 'border-gray-900' : 'border-gray-300'
+                                                }`}>
+                                                {bookingMode === 'instant' && (
+                                                    <div className="w-2.5 h-2.5 rounded-full bg-gray-900" />
+                                                )}
+                                            </div>
+                                        </div>
+                                        <div className="absolute -bottom-2 -right-2 w-36 transition-transform group-hover:scale-105 duration-300">
+                                            <img src="/info/signup/instant.png" alt="Instant Booking" className="w-full h-auto object-contain" />
+                                        </div>
+                                    </button>
+
+                                    {/* Flexi Booking */}
+                                    <button
+                                        onClick={() => setBookingMode('flexi')}
+                                        className={`relative rounded-2xl border-2 p-5 text-left transition-all w-[220px] h-[220px] flex flex-col justify-between overflow-hidden group ${bookingMode === 'flexi'
+                                            ? 'border-gray-900 bg-gray-50'
+                                            : 'border-gray-200 hover:border-gray-300'
+                                            }`}
+                                    >
+                                        <div className="flex justify-between items-start w-full z-10">
+                                            <h3 className="font-semibold text-lg text-gray-900 leading-tight">Flexi Booking</h3>
+                                            <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 ${bookingMode === 'flexi' ? 'border-gray-900' : 'border-gray-300'
+                                                }`}>
+                                                {bookingMode === 'flexi' && (
+                                                    <div className="w-2.5 h-2.5 rounded-full bg-gray-900" />
+                                                )}
+                                            </div>
+                                        </div>
+                                        <div className="absolute -bottom-2 -right-2 w-36 transition-transform group-hover:scale-105 duration-300">
+                                            <img src="/info/signup/flexi.png" alt="Flexi Booking" className="w-full h-auto object-contain" />
+                                        </div>
+                                    </button>
+
+                                    {/* Both */}
+                                    <button
+                                        onClick={() => setBookingMode('both')}
+                                        className={`relative rounded-2xl border-2 p-5 text-left transition-all w-[220px] h-[220px] flex flex-col justify-between overflow-hidden group ${bookingMode === 'both'
+                                            ? 'border-gray-900 bg-gray-50'
+                                            : 'border-gray-200 hover:border-gray-300'
+                                            }`}
+                                    >
+                                        <div className="flex justify-between items-start w-full z-10">
+                                            <h3 className="font-semibold text-lg text-gray-900 leading-tight">Both</h3>
+                                            <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 ${bookingMode === 'both' ? 'border-gray-900' : 'border-gray-300'
+                                                }`}>
+                                                {bookingMode === 'both' && (
+                                                    <div className="w-2.5 h-2.5 rounded-full bg-gray-900" />
+                                                )}
+                                            </div>
+                                        </div>
+                                        <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 w-48 transition-transform group-hover:scale-105 duration-300">
+                                            <img src="/info/signup/both.png" alt="Both" className="w-full h-auto object-contain" />
+                                        </div>
+                                    </button>
+                                </div>
+
+
+                                {/* Descriptions */}
+                                <div className="space-y-3 text-sm text-gray-600 mt-8">
+                                    <div>
+                                        <span className="font-semibold text-gray-900">Instant Booking:</span>
+                                        <br />
+                                        Get booked right away for quick beauty needs. Example: touch-ups, simple makeup, etc.
+                                    </div>
+                                    <div>
+                                        <span className="font-semibold text-gray-900">Flexi Booking:</span>
+                                        <br />
+                                        Bigger events that needs bigger planning. Example: weddings, bridal, etc.
+                                    </div>
+                                    <div>
+                                        <span className="font-semibold text-gray-900">Both:</span>
+                                        <br />
+                                        You are ready to slay both the above.
+                                    </div>
+                                </div>
+                            </>
+                        ) : bookingModeSubStep === 2 ? (
+                            <>
+                                {/* Profession Selection */}
+                                <h2 className="text-3xl font-semibold text-[#1E1E1E] mb-2">What do you specialize in ?</h2>
+                                <p className="text-sm text-gray-500 mb-8">Choose all that apply</p>
+
+                                {/* Profession Cards Grid */}
+                                <div className="grid grid-cols-2 gap-5 max-w-lg">
+                                    {professions.map((profession) => {
+                                        const isSelected = selectedProfessions.includes(profession.id);
+                                        return (
+                                            <button
+                                                key={profession.id}
+                                                onClick={() => toggleProfession(profession.id)}
+                                                className={`relative rounded-xl border-2 w-52 h-48 text-left transition-all hover:shadow-md overflow-hidden ${isSelected
+                                                    ? 'border-gray-900 bg-gray-50'
+                                                    : 'border-gray-200 hover:border-gray-300'
+                                                    }`}
+                                            >
+                                                {/* Top row: Checkbox + Label */}
+                                                <div className="flex items-center gap-2 px-3.5 pt-3.5">
+                                                    <div className={`w-4.5 h-4.5 rounded border-2 flex items-center justify-center shrink-0 ${isSelected
+                                                        ? 'bg-gray-900 border-gray-900'
+                                                        : 'bg-white border-gray-300'
+                                                        }`}>
+                                                        {isSelected && (
+                                                            <svg className="w-2.5 h-2.5 text-white" viewBox="0 0 12 12" fill="none">
+                                                                <path d="M10 3L4.5 8.5L2 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                                                            </svg>
+                                                        )}
+                                                    </div>
+                                                    <p className="text-sm font-semibold text-gray-900">{profession.label}</p>
+                                                </div>
+
+                                                {/* Illustration */}
+                                                <div className="flex items-end justify-center h-36 pt-1">
+                                                    <img
+                                                        src={profession.image}
+                                                        alt={profession.label}
+                                                        className="h-full w-auto object-contain object-bottom"
+                                                    />
+                                                </div>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </>
+                        ) : bookingModeSubStep === 3 ? (
+                            <>
+                                {/* Sub-step 3: Event Types & Skills */}
+                                <h2 className="text-3xl font-semibold text-[#1E1E1E] mb-2">Event types & Skills</h2>
+                                <p className="text-sm text-gray-500 mb-8">Tell us about the events you cover and your key skills</p>
+
+                                <div className="space-y-8 max-w-lg">
+                                    {/* Event Type Dropdown */}
+                                    <div className="space-y-2">
+                                        <label className="block text-sm font-medium text-gray-700">Event types you cover</label>
+                                        <div className="relative" ref={eventDropdownRef}>
+                                            <button
+                                                type="button"
+                                                onClick={() => setIsEventDropdownOpen(!isEventDropdownOpen)}
+                                                className="w-full flex items-center justify-between px-4 py-3 border border-gray-300 rounded-xl bg-white text-left hover:border-gray-400 transition-colors"
+                                            >
+                                                <span className={`text-sm ${selectedEventTypes.length > 0 ? 'text-gray-900' : 'text-gray-400'}`}>
+                                                    {selectedEventTypes.length > 0
+                                                        ? `${selectedEventTypes.length} event type${selectedEventTypes.length > 1 ? 's' : ''} selected`
+                                                        : 'Select event types'}
+                                                </span>
+                                                <svg className={`w-4 h-4 text-gray-500 transition-transform ${isEventDropdownOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                                </svg>
+                                            </button>
+
+                                            {/* Dropdown menu */}
+                                            {isEventDropdownOpen && (
+                                                <div className="absolute z-20 mt-1 w-full bg-white border border-gray-200 rounded-xl shadow-lg max-h-60 overflow-y-auto">
+                                                    {eventTypeOptions.map((eventType) => {
+                                                        const isSelected = selectedEventTypes.includes(eventType);
+                                                        return (
+                                                            <button
+                                                                key={eventType}
+                                                                type="button"
+                                                                onClick={() => toggleEventType(eventType)}
+                                                                className={`w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-gray-50 transition-colors ${isSelected ? 'bg-gray-50' : ''
+                                                                    }`}
+                                                            >
+                                                                <div className={`w-4.5 h-4.5 rounded border-2 flex items-center justify-center shrink-0 ${isSelected
+                                                                    ? 'bg-gray-900 border-gray-900'
+                                                                    : 'bg-white border-gray-300'
+                                                                    }`}>
+                                                                    {isSelected && (
+                                                                        <svg className="w-2.5 h-2.5 text-white" viewBox="0 0 12 12" fill="none">
+                                                                            <path d="M10 3L4.5 8.5L2 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                                                                        </svg>
+                                                                    )}
+                                                                </div>
+                                                                <span className="text-sm text-gray-900">{eventType}</span>
+                                                            </button>
+                                                        );
+                                                    })}
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        {/* Selected event type chips */}
+                                        {selectedEventTypes.length > 0 && (
+                                            <div className="flex flex-wrap gap-2 mt-2">
+                                                {selectedEventTypes.map((eventType) => (
+                                                    <span
+                                                        key={eventType}
+                                                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gray-100 text-gray-800 text-xs font-medium rounded-full"
+                                                    >
+                                                        {eventType}
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => toggleEventType(eventType)}
+                                                            className="text-gray-500 hover:text-gray-700"
+                                                        >
+                                                            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                                            </svg>
+                                                        </button>
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {/* Skills Input */}
+                                    <div className="space-y-2">
+                                        <label className="block text-sm font-medium text-gray-700">Your skills</label>
+                                        <div className="relative">
+                                            <input
+                                                type="text"
+                                                value={skillInput}
+                                                onChange={(e) => setSkillInput(e.target.value)}
+                                                onKeyDown={(e) => {
+                                                    if (e.key === 'Enter' && skillInput.trim()) {
+                                                        e.preventDefault();
+                                                        addSkill(skillInput);
+                                                    }
+                                                }}
+                                                onFocus={() => setIsSkillsModalOpen(true)}
+                                                placeholder="Type a skill and press Enter"
+                                                className="w-full px-4 py-3 border border-gray-300 rounded-xl bg-white text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:border-gray-500 transition-colors"
+                                            />
+                                            {skillInput.trim() && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => addSkill(skillInput)}
+                                                    className="absolute right-3 top-1/2 -translate-y-1/2 px-3 py-1 bg-gray-900 text-white text-xs font-medium rounded-lg hover:bg-gray-800 transition-colors"
+                                                >
+                                                    Add
+                                                </button>
+                                            )}
+                                        </div>
+
+                                        {/* Added skills chips */}
+                                        {skills.length > 0 && (
+                                            <div className="flex flex-wrap gap-2 mt-2">
+                                                {skills.map((skill) => (
+                                                    <span
+                                                        key={skill}
+                                                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-pink-50 text-pink-700 border border-pink-200 text-xs font-medium rounded-full"
+                                                    >
+                                                        {skill}
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => removeSkill(skill)}
+                                                            className="text-pink-400 hover:text-pink-600"
+                                                        >
+                                                            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                                            </svg>
+                                                        </button>
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        )}
+
+                                        {/* Skill suggestions */}
+                                        {isSkillsModalOpen && getSkillSuggestions().length > 0 && (
+                                            <div className="mt-3 p-4 bg-gray-50 rounded-xl border border-gray-200">
+                                                <div className="flex items-center justify-between mb-3">
+                                                    <h4 className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Suggested skills</h4>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setIsSkillsModalOpen(false)}
+                                                        className="text-gray-400 hover:text-gray-600"
+                                                    >
+                                                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                                        </svg>
+                                                    </button>
+                                                </div>
+                                                <div className="flex flex-wrap gap-2">
+                                                    {getSkillSuggestions().map((suggestion) => (
+                                                        <button
+                                                            key={suggestion}
+                                                            type="button"
+                                                            onClick={() => addSkill(suggestion)}
+                                                            className="inline-flex items-center gap-1 px-3 py-1.5 bg-white border border-gray-300 text-xs font-medium text-gray-700 rounded-full hover:border-gray-400 hover:bg-gray-50 transition-colors"
+                                                        >
+                                                            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                                                            </svg>
+                                                            {suggestion}
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            </>
+                        ) : bookingModeSubStep === 4 ? (
+                            <>
+                                {/* Sub-step 4: Service Location */}
+                                <h2 className="text-3xl font-semibold text-[#1E1E1E] mb-8">Where do you provide your services?</h2>
+
+                                <div className="flex flex-wrap gap-6 px-1">
+                                    {serviceLocationOptions.map((option) => {
+                                        const isSelected = serviceLocation === option.id;
+                                        return (
+                                            <button
+                                                key={option.id}
+                                                onClick={() => setServiceLocation(option.id)}
+                                                className={`relative rounded-2xl border-2 p-5 text-left transition-all w-55 h-55 flex flex-col justify-between overflow-hidden group ${isSelected
+                                                    ? 'border-gray-900 bg-gray-50'
+                                                    : 'border-gray-200 hover:border-gray-300'
+                                                    }`}
+                                            >
+                                                <div className="flex items-start gap-2 w-full z-10">
+                                                    <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 mt-0.5 ${isSelected ? 'border-gray-900' : 'border-gray-300'
+                                                        }`}>
+                                                        {isSelected && (
+                                                            <div className="w-2.5 h-2.5 rounded-full bg-gray-900" />
+                                                        )}
+                                                    </div>
+                                                    <div>
+                                                        <h3 className="font-semibold text-base text-gray-900 leading-tight">{option.label}</h3>
+                                                        {option.subtitle && (
+                                                            <p className="text-xs text-gray-500 mt-0.5">{option.subtitle}</p>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                                <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 w-40 transition-transform group-hover:scale-105 duration-300">
+                                                    <img src={option.image} alt={option.label} className="w-full h-auto object-contain" />
+                                                </div>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </>
+                        ) : (
+                            <>
+                                {/* Sub-step 5: Travel Willingness / Studio Address */}
+
+                                {/* Travel Willingness - shown for 'client' or 'both' */}
+                                {(serviceLocation === 'client' || serviceLocation === 'both') && (
+                                    <div className="mb-10">
+                                        <h2 className="text-3xl font-semibold text-[#1E1E1E] mb-8">How about your travel willingness?</h2>
+
+                                        <div className="flex flex-wrap gap-6 px-1">
+                                            {travelWillingnessOptions.map((option) => {
+                                                const isSelected = travelWillingness.includes(option.id);
+                                                return (
+                                                    <button
+                                                        key={option.id}
+                                                        onClick={() => toggleTravelWillingness(option.id)}
+                                                        className={`relative rounded-2xl border-2 p-5 text-left transition-all w-55 h-55 flex flex-col justify-between overflow-hidden group ${isSelected
+                                                            ? 'border-gray-900 bg-gray-50'
+                                                            : 'border-gray-200 hover:border-gray-300'
+                                                            }`}
+                                                    >
+                                                        <div className="flex items-center gap-2 w-full z-10">
+                                                            <div className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 ${isSelected
+                                                                ? 'bg-gray-900 border-gray-900'
+                                                                : 'bg-white border-gray-300'
+                                                                }`}>
+                                                                {isSelected && (
+                                                                    <svg className="w-3 h-3 text-white" viewBox="0 0 12 12" fill="none">
+                                                                        <path d="M10 3L4.5 8.5L2 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                                                                    </svg>
+                                                                )}
+                                                            </div>
+                                                            <h3 className="font-semibold text-base text-gray-900 leading-tight">{option.label}</h3>
+                                                        </div>
+                                                        <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 w-40 transition-transform group-hover:scale-105 duration-300">
+                                                            <img src={option.image} alt={option.label} className="w-full h-auto object-contain" />
+                                                        </div>
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Studio Address - shown for 'studio' or 'both' */}
+                                {(serviceLocation === 'studio' || serviceLocation === 'both') && (
+                                    <div className="mb-10">
+                                        <h2 className="text-3xl font-semibold text-[#1E1E1E] mb-6">Studio Address</h2>
+
+                                        <div className="space-y-4 max-w-lg">
+                                            {/* Shop No */}
+                                            <div className="relative">
+                                                <input
+                                                    type="text"
+                                                    value={studioAddress.shopNo}
+                                                    onChange={(e) => updateStudioAddress('shopNo', e.target.value)}
+                                                    placeholder=" "
+                                                    className="peer w-full px-4 pt-5 pb-2 border border-gray-300 rounded-xl bg-white text-sm text-gray-900 focus:outline-none focus:border-gray-500 transition-colors"
+                                                />
+                                                <label className="absolute left-4 top-2 text-[10px] text-gray-500 transition-all peer-placeholder-shown:top-3.5 peer-placeholder-shown:text-sm peer-focus:top-2 peer-focus:text-[10px]">
+                                                    Shop No
+                                                </label>
+                                            </div>
+
+                                            {/* Area, Street, Sector, Village */}
+                                            <div className="relative">
+                                                <input
+                                                    type="text"
+                                                    value={studioAddress.area}
+                                                    onChange={(e) => updateStudioAddress('area', e.target.value)}
+                                                    placeholder=" "
+                                                    className="peer w-full px-4 pt-5 pb-2 border border-gray-300 rounded-xl bg-white text-sm text-gray-900 focus:outline-none focus:border-gray-500 transition-colors"
+                                                />
+                                                <label className="absolute left-4 top-2 text-[10px] text-gray-500 transition-all peer-placeholder-shown:top-3.5 peer-placeholder-shown:text-sm peer-focus:top-2 peer-focus:text-[10px]">
+                                                    Area, Street, Sector, Village
+                                                </label>
+                                            </div>
+
+                                            {/* Landmark */}
+                                            <div className="relative">
+                                                <input
+                                                    type="text"
+                                                    value={studioAddress.landmark}
+                                                    onChange={(e) => updateStudioAddress('landmark', e.target.value)}
+                                                    placeholder=" "
+                                                    className="peer w-full px-4 pt-5 pb-2 border border-gray-300 rounded-xl bg-white text-sm text-gray-900 focus:outline-none focus:border-gray-500 transition-colors"
+                                                />
+                                                <label className="absolute left-4 top-2 text-[10px] text-gray-500 transition-all peer-placeholder-shown:top-3.5 peer-placeholder-shown:text-sm peer-focus:top-2 peer-focus:text-[10px]">
+                                                    Landmark
+                                                </label>
+                                            </div>
+
+                                            {/* Pincode + Town/City row */}
+                                            <div className="flex gap-4">
+                                                <div className="relative flex-1">
+                                                    <input
+                                                        type="text"
+                                                        value={studioAddress.pincode}
+                                                        onChange={(e) => updateStudioAddress('pincode', e.target.value)}
+                                                        placeholder=" "
+                                                        className="peer w-full px-4 pt-5 pb-2 border border-gray-300 rounded-xl bg-white text-sm text-gray-900 focus:outline-none focus:border-gray-500 transition-colors"
+                                                    />
+                                                    <label className="absolute left-4 top-2 text-[10px] text-gray-500 transition-all peer-placeholder-shown:top-3.5 peer-placeholder-shown:text-sm peer-focus:top-2 peer-focus:text-[10px]">
+                                                        Pincode
+                                                    </label>
+                                                </div>
+                                                <div className="relative flex-1">
+                                                    <input
+                                                        type="text"
+                                                        value={studioAddress.city}
+                                                        onChange={(e) => updateStudioAddress('city', e.target.value)}
+                                                        placeholder=" "
+                                                        className="peer w-full px-4 pt-5 pb-2 border border-gray-300 rounded-xl bg-white text-sm text-gray-900 focus:outline-none focus:border-gray-500 transition-colors"
+                                                    />
+                                                    <label className="absolute left-4 top-2 text-[10px] text-gray-500 transition-all peer-placeholder-shown:top-3.5 peer-placeholder-shown:text-sm peer-focus:top-2 peer-focus:text-[10px]">
+                                                        Town/City
+                                                    </label>
+                                                </div>
+                                            </div>
+
+                                            {/* State */}
+                                            <div className="relative">
+                                                <input
+                                                    type="text"
+                                                    value={studioAddress.state}
+                                                    onChange={(e) => updateStudioAddress('state', e.target.value)}
+                                                    placeholder=" "
+                                                    className="peer w-full px-4 pt-5 pb-2 border border-gray-300 rounded-xl bg-white text-sm text-gray-900 focus:outline-none focus:border-gray-500 transition-colors"
+                                                />
+                                                <label className="absolute left-4 top-2 text-[10px] text-gray-500 transition-all peer-placeholder-shown:top-3.5 peer-placeholder-shown:text-sm peer-focus:top-2 peer-focus:text-[10px]">
+                                                    State
+                                                </label>
+                                            </div>
+                                        </div>
+
+                                        {/* Studio Working Hours (optional) */}
+                                        <div className="mt-8">
+                                            <h3 className="text-lg font-semibold text-[#1E1E1E] mb-4">Studio working hours (optional)</h3>
+
+                                            {/* Added working hour chips */}
+                                            <div className="space-y-2 mb-4">
+                                                {workingHours.map((wh) => (
+                                                    <div
+                                                        key={wh.period}
+                                                        className="inline-flex items-center gap-3 px-4 py-3 border border-gray-200 rounded-xl bg-white mr-2"
+                                                    >
+                                                        <svg className="w-4 h-4 text-gray-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                                                        </svg>
+                                                        <span className="text-sm text-gray-900">
+                                                            {wh.period === 'Any time' ? 'Any time' : `${wh.period} • ${wh.startTime} - ${wh.endTime}`}
+                                                        </span>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => removeWorkingHour(wh.period)}
+                                                            className="text-gray-400 hover:text-gray-600 ml-1"
+                                                        >
+                                                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                                            </svg>
+                                                        </button>
+                                                    </div>
+                                                ))}
+                                            </div>
+
+                                            {/* Add working hours button */}
+                                            <button
+                                                type="button"
+                                                onClick={() => setIsTimePickerOpen(true)}
+                                                className="inline-flex items-center gap-2 px-4 py-2.5 border border-dashed border-gray-300 rounded-xl text-sm text-gray-600 hover:border-gray-400 hover:bg-gray-50 transition-colors"
+                                            >
+                                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                                                </svg>
+                                                Add working hours
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+                            </>
+                        )}
+
+                        {/* Time Picker Modal */}
+                        {isTimePickerOpen && (
+                            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+                                <div className="bg-white rounded-2xl p-6 w-96 shadow-2xl">
+                                    <h3 className="text-lg font-semibold text-[#1E1E1E] mb-5">Select time</h3>
+
+                                    {/* Presets row 1 */}
+                                    <div className="flex gap-3 mb-3">
+                                        {timePresets.map((preset) => (
+                                            <button
+                                                key={preset.label}
+                                                type="button"
+                                                onClick={() => setTimePeriodSelection(preset.label)}
+                                                className={`flex-1 py-2.5 px-3 rounded-xl border-2 text-center transition-all ${timePeriodSelection === preset.label
+                                                    ? 'border-gray-900 bg-gray-50'
+                                                    : 'border-gray-200 hover:border-gray-300'
+                                                    }`}
+                                            >
+                                                <p className="text-sm font-medium text-gray-900">{preset.label}</p>
+                                                <p className="text-[10px] text-gray-500">{preset.startTime} - {preset.endTime}</p>
+                                            </button>
+                                        ))}
+                                    </div>
+
+                                    {/* Presets row 2 */}
+                                    <div className="flex gap-3 mb-5">
+                                        <button
+                                            type="button"
+                                            onClick={() => setTimePeriodSelection('Custom')}
+                                            className={`flex-1 py-2.5 px-3 rounded-xl border-2 text-center transition-all ${timePeriodSelection === 'Custom'
+                                                ? 'border-gray-900 bg-gray-50'
+                                                : 'border-gray-200 hover:border-gray-300'
+                                                }`}
+                                        >
+                                            <p className="text-sm font-medium text-gray-900">Custom</p>
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => setTimePeriodSelection('Any time')}
+                                            className={`flex-1 py-2.5 px-3 rounded-xl border-2 text-center transition-all ${timePeriodSelection === 'Any time'
+                                                ? 'border-gray-900 bg-gray-50'
+                                                : 'border-gray-200 hover:border-gray-300'
+                                                }`}
+                                        >
+                                            <p className="text-sm font-medium text-gray-900">Any time</p>
+                                        </button>
+                                    </div>
+
+                                    {/* Custom time inputs */}
+                                    {timePeriodSelection === 'Custom' && (
+                                        <div className="flex gap-3 mb-5">
+                                            <div className="flex-1">
+                                                <select
+                                                    value={customStartTime}
+                                                    onChange={(e) => setCustomStartTime(e.target.value)}
+                                                    className="w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm text-gray-700 bg-white focus:outline-none focus:border-gray-500"
+                                                >
+                                                    <option value="">Select start time</option>
+                                                    {timeOptions.map((t) => (
+                                                        <option key={`start-${t}`} value={t}>{t}</option>
+                                                    ))}
+                                                </select>
+                                            </div>
+                                            <div className="flex-1">
+                                                <select
+                                                    value={customEndTime}
+                                                    onChange={(e) => setCustomEndTime(e.target.value)}
+                                                    className="w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm text-gray-700 bg-white focus:outline-none focus:border-gray-500"
+                                                >
+                                                    <option value="">Select end time</option>
+                                                    {timeOptions.map((t) => (
+                                                        <option key={`end-${t}`} value={t}>{t}</option>
+                                                    ))}
+                                                </select>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Actions */}
+                                    <div className="flex justify-end gap-3">
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setIsTimePickerOpen(false);
+                                                setTimePeriodSelection('');
+                                                setCustomStartTime('');
+                                                setCustomEndTime('');
+                                            }}
+                                            className="px-5 py-2.5 text-sm font-medium text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+                                        >
+                                            Clear
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={handleTimePickerDone}
+                                            disabled={!timePeriodSelection || (timePeriodSelection === 'Custom' && (!customStartTime || !customEndTime))}
+                                            className={`px-5 py-2.5 text-sm font-medium text-white rounded-lg transition-colors ${timePeriodSelection && !(timePeriodSelection === 'Custom' && (!customStartTime || !customEndTime))
+                                                ? 'bg-gray-900 hover:bg-gray-800'
+                                                : 'bg-gray-400 cursor-not-allowed'
+                                                }`}
+                                        >
+                                            Done
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            </div>
+
+            {/* Right side - Profile Preview (30%) */}
+            <div className="w-[30%] border-l border-gray-200 hidden lg:block">
+                <div className="h-10 bg-linear-to-b from-pink-100 to-white"></div>
+                <div className="p-6">
+                    <ArtistProfilePreview
+                        name={formData.fullName}
+                        profilePicUrl={formData.profilePicUrl}
+                        profession={selectedProfessions.map(id => professions.find(p => p.id === id)?.label || '').filter(Boolean)}
+                        bio={formData.bio}
+                        kycVerified={formData.kycStatus === 'verified'}
+                        certificateUrl={formData.certificateUrl}
+                        city={formData.address.city}
+                        state={formData.address.state}
+                        street={formData.address.street}
+                        skills={skills}
+                    />
+                </div>
+            </div>
+        </div>
+    );
+
+    // Render method selection (initial view) / Setup hub
     const renderMethodSelection = () => (
         <div className="h-screen bg-[#FAF9F8] relative overflow-hidden">
             <button
@@ -1480,30 +3281,68 @@ const ArtistSignupView: React.FC = () => {
                     </h1>
 
                     <div className="space-y-2">
-                        {/* Step 1 with method buttons */}
-                        <div className="rounded-xl bg-white border border-gray-200 shadow-sm p-4">
-                            <div className="flex items-center justify-between gap-3 mb-3">
-                                <div className="flex items-center gap-3">
-                                    <div className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-semibold bg-[#1E1E1E] text-white">
-                                        1
+                        {/* Step 1: Personal Details */}
+                        {setupSteps.step1 ? (
+                            // Step 1 completed — show as completed card
+                            <StepCard
+                                stepNumber={1}
+                                title="Personal details"
+                                description="Basic details about you"
+                                icon={<PersonalDetailsIcon />}
+                                isActive={false}
+                                isCompleted={true}
+                            />
+                        ) : (
+                            // Step 1 not done — show signup method buttons
+                            <div className="rounded-xl bg-white border-2 border-gray-300 shadow-sm p-4">
+                                <div className="flex items-center justify-between gap-3 mb-3">
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-semibold bg-[#1E1E1E] text-white">
+                                            1
+                                        </div>
+                                        <div>
+                                            <p className="text-xs text-gray-500">Step 1</p>
+                                            <h3 className="text-sm font-semibold text-[#1E1E1E]">Personal details</h3>
+                                        </div>
                                     </div>
-                                    <div>
-                                        <p className="text-xs text-gray-500">Step 1</p>
-                                        <h3 className="text-sm font-semibold text-[#1E1E1E]">Personal details</h3>
-                                    </div>
+                                    <PersonalDetailsIcon />
                                 </div>
-                                <PersonalDetailsIcon />
+                                <div className="flex flex-wrap gap-2 ml-9">
+                                    <SignupMethodButton icon={<PhoneIcon />} label="Sign up with" onClick={handlePhoneSignup} disabled={isLoading} />
+                                    <SignupMethodButton icon={<EmailIcon />} label="Sign up with" onClick={handleEmailSignup} disabled={isLoading} />
+                                    <SignupMethodButton icon={<GoogleIcon />} label="Sign up with" onClick={handleGoogleSignup} disabled={isLoading} />
+                                </div>
                             </div>
-                            <div className="flex flex-wrap gap-2 ml-9">
-                                <SignupMethodButton icon={<PhoneIcon />} label="Sign up with" onClick={handlePhoneSignup} disabled={isLoading} />
-                                <SignupMethodButton icon={<EmailIcon />} label="Sign up with" onClick={handleEmailSignup} disabled={isLoading} />
-                                <SignupMethodButton icon={<GoogleIcon />} label="Sign up with" onClick={handleGoogleSignup} disabled={isLoading} />
-                            </div>
-                        </div>
+                        )}
 
-                        <StepCard stepNumber={2} title="Booking Modes" description="Pick your categories and specialization" icon={<BookingModesIcon />} isActive={false} isCompleted={false} />
-                        <StepCard stepNumber={3} title="Portfolio" description="Showcase your best work" icon={<PortfolioIcon />} isActive={false} isCompleted={false} />
-                        <StepCard stepNumber={4} title="Bank details" description="Set up your account details for payouts" icon={<BankDetailsIcon />} isActive={false} isCompleted={false} />
+                        {/* Steps 2-4 */}
+                        <StepCard
+                            stepNumber={2}
+                            title="Booking Modes"
+                            description="Pick your categories and specialization"
+                            icon={<BookingModesIcon />}
+                            isActive={activeStep === 2}
+                            isCompleted={setupSteps.step2}
+                            onContinue={activeStep === 2 ? () => handleStepContinue(2) : undefined}
+                        />
+                        <StepCard
+                            stepNumber={3}
+                            title="Portfolio"
+                            description="Showcase your best work"
+                            icon={<PortfolioIcon />}
+                            isActive={activeStep === 3}
+                            isCompleted={setupSteps.step3}
+                            onContinue={activeStep === 3 ? () => handleStepContinue(3) : undefined}
+                        />
+                        <StepCard
+                            stepNumber={4}
+                            title="Bank details"
+                            description="Set up your account details for payouts"
+                            icon={<BankDetailsIcon />}
+                            isActive={activeStep === 4}
+                            isCompleted={setupSteps.step4}
+                            onContinue={activeStep === 4 ? () => handleStepContinue(4) : undefined}
+                        />
                     </div>
                 </div>
             </div>
@@ -2181,19 +4020,73 @@ const ArtistSignupView: React.FC = () => {
                 <div className="h-10 bg-linear-to-b from-pink-100 to-white"></div>
                 {/* Content */}
                 <div className="p-6">
-                    <h2 className="text-xl font-semibold text-[#964152] mb-6">Profile Preview</h2>
-                    <div className="text-gray-500 text-sm">
-                        {formData.fullName && <p className="font-medium text-gray-900">{formData.fullName}</p>}
-                        {formData.email && <p>{formData.email}</p>}
-                        {formData.phone && <p>{formData.countryCode} {formData.phone}</p>}
-                        {formData.bio && <p className="mt-4 italic">"{formData.bio}"</p>}
-                    </div>
+                    <ArtistProfilePreview
+                        name={formData.fullName}
+                        profilePicUrl={formData.profilePicUrl}
+                        bio={formData.bio}
+                        kycVerified={formData.kycStatus === 'verified'}
+                        certificateUrl={formData.certificateUrl}
+                        city={formData.address.city}
+                        state={formData.address.state}
+                        street={formData.address.street}
+                        skills={skills}
+                    />
                 </div>
             </div>
         </div>
     );
 
     // Main render
+    if (formStep === 'portfolio') {
+        return (
+            <>
+                {renderPortfolioForm()}
+                <SuccessAnimation
+                    isVisible={showSuccess}
+                    message="Portfolio Saved!"
+                    subMessage="Returning to setup..."
+                    onComplete={() => {
+                        setShowSuccess(false);
+                        setFormStep('method-select');
+                    }}
+                />
+            </>
+        );
+    }
+
+    if (formStep === 'bank-details') {
+        return (
+            <>
+                {renderBankDetailsForm()}
+                <SuccessAnimation
+                    isVisible={showSuccess}
+                    message="Profile Completed!"
+                    subMessage="Redirecting to home..."
+                    onComplete={() => {
+                        navigate('/artist/home');
+                    }}
+                />
+            </>
+        );
+    }
+
+    if (formStep === 'booking-modes') {
+        return (
+            <>
+                {renderBookingModesForm()}
+                <SuccessAnimation
+                    isVisible={showSuccess}
+                    message="Booking Mode Saved!"
+                    subMessage="Returning to setup..."
+                    onComplete={() => {
+                        setShowSuccess(false);
+                        setFormStep('method-select');
+                    }}
+                />
+            </>
+        );
+    }
+
     if (formStep === 'method-select') {
         return (
             <>
@@ -2210,11 +4103,11 @@ const ArtistSignupView: React.FC = () => {
             <SuccessAnimation
                 isVisible={showSuccess}
                 message="Personal Details Saved!"
-                subMessage="Moving to next step..."
+                subMessage="Returning to setup..."
                 onComplete={() => {
                     setShowSuccess(false);
-                    // Navigate to next major step (Step 2: Booking Modes)
-                    navigate('/auth/artist/signup/booking-modes');
+                    // Return to the setup hub with Step 1 marked complete
+                    setFormStep('method-select');
                 }}
             />
         </>

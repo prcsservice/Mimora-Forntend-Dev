@@ -63,7 +63,11 @@ class AuthService {
   // OAUTH (Firebase token required)
   // Supports both customer and artist auth
   // ===============================
-  async authenticateWithOAuth(firebaseToken: string, userType: 'customer' | 'artist' = 'customer'): Promise<User> {
+  async authenticateWithOAuth(
+    firebaseToken: string,
+    userType: 'customer' | 'artist' = 'customer',
+    mode: 'login' | 'signup' = 'login'
+  ): Promise<User> {
     const endpoint = userType === 'artist' ? '/auth/artist/oauth' : '/auth/customer/oauth';
     const location = getCachedLocation();
     const cachedAddr = this.getCachedAddress();
@@ -76,6 +80,7 @@ class AuthService {
         latitude: location?.latitude,
         longitude: location?.longitude,
         ...cachedAddr,
+        mode,
       }),
     });
   }
@@ -190,6 +195,23 @@ class AuthService {
     state?: string;
     latitude?: number;
     longitude?: number;
+    // Step 2: Booking Preferences
+    booking_mode?: string;
+    skills?: string[];
+    event_types?: string[];
+    service_location?: string;
+    travel_willingness?: string[];
+    studio_address?: string;  // JSON string
+    working_hours?: string;  // JSON string
+    // Step 3: Portfolio
+    portfolio?: string[];
+    // Step 4: Bank Details
+    bank_account_name?: string;
+    bank_account_number?: string;
+    bank_name?: string;
+    bank_ifsc?: string;
+    upi_id?: string;
+    mark_complete?: boolean;  // Only true when ALL steps are done
   }): Promise<User> {
     const token = localStorage.getItem('firebaseToken');
     if (!token) {
@@ -202,6 +224,25 @@ class AuthService {
         Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify(profileData),
+    });
+  }
+
+  // ===============================
+  // GET CURRENT ARTIST PROFILE
+  // Fetch the authenticated artist's full profile from backend
+  // Used as fallback when localStorage is missing/corrupted
+  // ===============================
+  async getCurrentArtist(): Promise<User> {
+    const token = localStorage.getItem('firebaseToken');
+    if (!token) {
+      throw new Error('Not authenticated. Please log in first.');
+    }
+
+    return this.fetchJSON('/auth/artist/me', {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
     });
   }
 }

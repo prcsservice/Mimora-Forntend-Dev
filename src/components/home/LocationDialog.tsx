@@ -60,9 +60,9 @@ const LocationDialog: React.FC<LocationDialogProps> = ({ isOpen, onClose }) => {
 
         const reverseGeocode = async () => {
             try {
+                const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
                 const res = await fetch(
-                    `https://nominatim.openstreetmap.org/reverse?format=json&lat=${location.latitude}&lon=${location.longitude}&addressdetails=1`,
-                    { headers: { 'Accept-Language': 'en' } }
+                    `${baseUrl}/geocode/reverse?lat=${location.latitude}&lon=${location.longitude}`
                 );
                 const data = await res.json();
                 if (data?.address) {

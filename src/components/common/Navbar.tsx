@@ -1,13 +1,22 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '@/contexts/AuthContext';
 import LoginBottomSheet from './LoginBottomSheet';
 
 function Navbar() {
     const [showBottomSheet, setShowBottomSheet] = useState(false);
     const navigate = useNavigate();
+    const { isAuthenticated, userType } = useAuth();
 
     // Handle navigation to auth page with smooth transition
     const handleLoginClick = () => {
+        // If already logged in, redirect to appropriate home page
+        if (isAuthenticated) {
+            const destination = userType === 'artist' ? '/artist/home' : '/home';
+            navigate(destination);
+            return;
+        }
+
         // Check if mobile view (less than 768px)
         if (window.innerWidth < 768) {
             setShowBottomSheet(true);

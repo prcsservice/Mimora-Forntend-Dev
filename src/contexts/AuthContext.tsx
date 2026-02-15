@@ -22,6 +22,7 @@ interface AuthState {
 interface AuthContextValue extends AuthState {
     // Actions
     setUserType: (type: UserType) => void;
+    updateUser: (user: User) => void;  // Update user state (e.g. after profile completion)
     loginWithGoogle: () => Promise<void>;
     sendPhoneOTP: (phoneNumber: string) => Promise<void>;
     verifyPhoneOTP: (otp: string, name: string) => Promise<void>;
@@ -56,17 +57,22 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     // Check for existing session on mount
     useEffect(() => {
         const storedUser = localStorage.getItem('user');
-        const storedUserType = localStorage.getItem('userType') as UserType;
-        // Also check sessionStorage for userType (for unauth users during signup flow)
-        const sessionUserType = sessionStorage.getItem('userType') as UserType;
 
         if (storedUser) {
             try {
                 const user = JSON.parse(storedUser) as User;
+
+                // Auto-detect userType from user object structure
+                // Artist objects have 'username' field, customer objects don't
+                const detectedType: UserType = 'username' in user ? 'artist' : 'customer';
+
+                // Sync localStorage with detected type
+                localStorage.setItem('userType', detectedType);
+
                 setState(prev => ({
                     ...prev,
                     user,
-                    userType: storedUserType,
+                    userType: detectedType,
                     isAuthenticated: true,
                     isLoading: false,
                 }));
@@ -76,7 +82,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
                 setState(prev => ({ ...prev, isLoading: false }));
             }
         } else {
-            // Restore userType from session for signup flow
+            // No stored user - check sessionStorage for userType (signup flow)
+            const sessionUserType = sessionStorage.getItem('userType') as UserType;
             setState(prev => ({
                 ...prev,
                 userType: sessionUserType,
@@ -155,17 +162,27 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     const completeAuth = useCallback((user: User, firebaseToken: string) => {
         localStorage.setItem('user', JSON.stringify(user));
         localStorage.setItem('firebaseToken', firebaseToken);
-        if (state.userType) {
-            localStorage.setItem('userType', state.userType);
-        }
+
+        // Auto-detect userType from user object structure
+        // Artist objects have 'username' field, customer objects don't
+        const detectedType: UserType = 'username' in user ? 'artist' : 'customer';
+        localStorage.setItem('userType', detectedType);
+
         setState(prev => ({
             ...prev,
             user,
+            userType: detectedType,
             isAuthenticated: true,
             isLoading: false,
             error: null,
         }));
-    }, [state.userType]);
+    }, []);
+
+    // Update user state (e.g. after profile completion)
+    const updateUser = useCallback((user: User) => {
+        localStorage.setItem('user', JSON.stringify(user));
+        setState(prev => ({ ...prev, user }));
+    }, []);
 
     // Set user type (from profile selection) - persist to sessionStorage
     const setUserType = useCallback((type: UserType) => {
@@ -197,6 +214,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
                 setError('Sign-in cancelled');
             } else if (err.code === 'auth/popup-blocked') {
                 setError('Popup blocked. Please allow popups for this site.');
+            } else if (err.message?.includes('No artist account found') || err.message?.includes('No customer account found')) {
+                setError(err.message);
+                toast.error(err.message);
             } else {
                 setError(err.message || 'Failed to sign in with Google');
             }
@@ -314,6 +334,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     const value = useMemo<AuthContextValue>(() => ({
         ...state,
         setUserType,
+        updateUser,
         loginWithGoogle,
         sendPhoneOTP,
         verifyPhoneOTP,
@@ -323,7 +344,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         clearError,
         startTransition,
         endTransition,
-    }), [state, setUserType, loginWithGoogle, sendPhoneOTP, verifyPhoneOTP, sendEmailOTP, verifyEmailOTP, logout, clearError, startTransition, endTransition]);
+    }), [state, setUserType, updateUser, loginWithGoogle, sendPhoneOTP, verifyPhoneOTP, sendEmailOTP, verifyEmailOTP, logout, clearError, startTransition, endTransition]);
 
     return (
         <AuthContext.Provider value={value}>
